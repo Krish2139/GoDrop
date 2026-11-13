@@ -62,9 +62,13 @@ export function rateLimiter(options = {}) {
     }
 
     rateLimitMetrics.totalRequestsChecked++;
-    const identifier = req.headers['authorization'] 
-      ? `user:${req.headers['authorization'].slice(-16)}` 
-      : (req.ip || req.connection.remoteAddress || '127.0.0.1');
+    const forwarded = req.headers['x-forwarded-for'];
+    const clientIp = forwarded ? forwarded.split(',')[0].trim() : (req.ip || req.connection?.remoteAddress || '127.0.0.1');
+    const identifier = req.headers['x-client-id']
+      ? `client:${req.headers['x-client-id']}`
+      : (req.headers['authorization'] 
+          ? `user:${req.headers['authorization'].slice(-16)}` 
+          : clientIp);
 
     let allowed = false;
     let remaining = capacity;

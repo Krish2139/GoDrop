@@ -33,4 +33,6 @@ Thumbs.db
 # Docker volumes and local data
 pgdata/
 redisdata/
+bin/
+*.zip
 

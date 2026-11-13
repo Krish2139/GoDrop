@@ -17,7 +17,12 @@
     "docker:all": "docker compose up -d",
     "test": "node --test tests/**/*.test.js",
     "test:unit": "node --test tests/unit/*.test.js",
-    "test:integration": "node --test tests/integration/*.test.js"
+    "test:integration": "node --test tests/integration/*.test.js",
+    "test:load": "node scripts/run-load-test.js tests/k6/suite.js",
+    "test:load:ingress": "node scripts/run-load-test.js tests/k6/gateway-ingress.js",
+    "test:load:booking": "node scripts/run-load-test.js tests/k6/concurrent-booking.js",
+    "test:load:ratelimit": "node scripts/run-load-test.js tests/k6/rate-limiter-stress.js",
+    "test:load:dispatch": "node scripts/run-load-test.js tests/k6/geospatial-dispatch.js"
   },
   "keywords": [
     "distributed-systems",

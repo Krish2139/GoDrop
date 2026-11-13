@@ -13,3 +13,4 @@ export default {
   coverageDirectory: 'coverage',
   coverageReporters: ['text', 'lcov'],
 };
+

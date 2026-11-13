@@ -46,3 +46,4 @@ describe('Integration: Circuit Breaker & Chaos Engineering Controls', () => {
     assert.strictEqual(statusRes.circuitBreakers.rideService.state, 'CLOSED');
   });
 });
+
