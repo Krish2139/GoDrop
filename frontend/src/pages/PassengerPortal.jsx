@@ -21,12 +21,14 @@ import {
 import './PassengerPortal.css';
 
 const LOCATION_PRESETS = [
-  { name: 'Downtown Central Mall', lat: 12.9716, lng: 77.5946 },
-  { name: 'MG Road Metro Station', lat: 12.9750, lng: 77.6080 },
-  { name: 'Indiranagar 100ft Road', lat: 12.9784, lng: 77.6408 },
-  { name: 'Koramangala 5th Block', lat: 12.9352, lng: 77.6245 },
-  { name: 'Tech Innovation Park (Whitefield)', lat: 12.9854, lng: 77.7312 },
-  { name: 'International Airport T1', lat: 13.1986, lng: 77.7066 },
+  { name: 'SG Highway (Iscon Cross Road)', lat: 23.0275, lng: 72.5076 },
+  { name: 'Vastrapur Lake / AlphaOne Mall', lat: 23.0373, lng: 72.5303 },
+  { name: 'Navrangpura (CG Road)', lat: 23.0372, lng: 72.5613 },
+  { name: 'Sabarmati Riverfront (Ashram Road)', lat: 23.0338, lng: 72.5714 },
+  { name: 'Prahlad Nagar Corporate Road', lat: 23.0125, lng: 72.5108 },
+  { name: 'Ahmedabad Junction (Kalupur Station)', lat: 23.0233, lng: 72.6006 },
+  { name: 'SVP International Airport (SVPIA)', lat: 23.0734, lng: 72.6266 },
+  { name: 'GIFT City / Gandhinagar Hub', lat: 23.1598, lng: 72.6842 },
 ];
 
 const PassengerPortal = () => {

@@ -21,11 +21,12 @@ import {
 import './DriverPortal.css';
 
 const GPS_WAYPOINTS = [
-  { name: 'Downtown Central Mall', lat: 12.9719, lng: 77.5937, heading: 90 },
-  { name: 'Indiranagar 100ft Road', lat: 12.9780, lng: 77.6010, heading: 180 },
-  { name: 'Koramangala 5th Block', lat: 12.9350, lng: 77.6240, heading: 270 },
-  { name: 'MG Road Metro Station', lat: 12.9750, lng: 77.6080, heading: 45 },
-  { name: 'Airport Expressway Toll', lat: 13.1000, lng: 77.6500, heading: 0 },
+  { name: 'SG Highway (Iscon Cross Road)', lat: 23.0275, lng: 72.5076, heading: 90 },
+  { name: 'Vastrapur Lake / AlphaOne', lat: 23.0373, lng: 72.5303, heading: 180 },
+  { name: 'Navrangpura / CG Road', lat: 23.0372, lng: 72.5613, heading: 45 },
+  { name: 'Sabarmati Riverfront Promenade', lat: 23.0338, lng: 72.5714, heading: 0 },
+  { name: 'SVP International Airport (SVPIA)', lat: 23.0734, lng: 72.6266, heading: 270 },
+  { name: 'GIFT City Gandhinagar', lat: 23.1598, lng: 72.6842, heading: 15 },
 ];
 
 const DriverPortal = () => {
@@ -39,9 +40,9 @@ const DriverPortal = () => {
   const [message, setMessage] = useState(null);
   const [error, setError] = useState(null);
 
-  // GPS Simulation State
-  const [simLat, setSimLat] = useState(12.9719);
-  const [simLng, setSimLng] = useState(77.5937);
+  // GPS Simulation State (Default: Ahmedabad SG Highway)
+  const [simLat, setSimLat] = useState(23.0275);
+  const [simLng, setSimLng] = useState(72.5076);
   const [simHeading, setSimHeading] = useState(90);
 
   const loadDriverData = async () => {
