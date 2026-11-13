@@ -22,8 +22,8 @@ const Home = () => {
   const milestones = [
     { id: 1, title: 'Dev Environment & React Setup', status: 'completed' },
     { id: 2, title: 'Express Backend & API Gateway', status: 'completed' },
-    { id: 3, title: 'PostgreSQL Database & Migrations', status: 'next' },
-    { id: 4, title: 'JWT Auth & RBAC Security', status: 'upcoming' },
+    { id: 3, title: 'PostgreSQL Database & Migrations', status: 'completed' },
+    { id: 4, title: 'JWT Auth & RBAC Security', status: 'next' },
     { id: 5, title: 'Passenger & Driver Dashboards', status: 'upcoming' },
     { id: 6, title: 'Ride Lifecycle State Machine', status: 'upcoming' },
     { id: 7, title: 'Atomic Driver Dispatch Algorithm', status: 'upcoming' },

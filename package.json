@@ -9,6 +9,11 @@
     "gateway:dev": "npm --prefix gateway run dev",
     "ride:dev": "npm --prefix services/ride-service run dev",
     "driver:dev": "npm --prefix services/driver-service run dev",
+    "db:test": "node database/test-connection.js",
+    "db:migrate": "node database/migrate.js up",
+    "db:seed": "node database/migrate.js seed",
+    "docker:db": "docker compose up -d postgres",
+    "docker:all": "docker compose up -d",
     "test": "echo \"Testing will be configured in Milestone 13\" && exit 0"
   },
   "keywords": [

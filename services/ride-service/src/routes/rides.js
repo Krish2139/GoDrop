@@ -2,18 +2,19 @@ import express from 'express';
 import { z } from 'zod';
 import { RIDE_STATES, isValidTransition } from '../stateMachine.js';
 import { logger } from '../logger.js';
+import { query, isDbConnected } from '../db.js';
 
 const router = express.Router();
 
-// In-Memory Data Store (will be migrated to PostgreSQL in Milestone 3)
+// Resilient In-Memory Store fallback
 export const ridesStore = [
   {
     id: 'ride-seed-1',
     passenger_id: 'pass-seed-1',
-    passenger_name: 'John Doe',
+    passenger_name: 'Aarav Sharma',
     driver_id: 'driver-seed-1',
     status: RIDE_STATES.COMPLETED,
-    pickup_address: 'Downtown Metro Station',
+    pickup_address: 'Downtown Central Mall',
     pickup_latitude: 12.9716,
     pickup_longitude: 77.5946,
     destination_address: 'Tech Innovation Park',
@@ -25,7 +26,6 @@ export const ridesStore = [
   }
 ];
 
-// Zod Validation Schema for creating a ride
 const createRideSchema = z.object({
   passenger_id: z.string().min(1, 'Passenger ID is required'),
   passenger_name: z.string().optional().default('Passenger'),
@@ -38,22 +38,77 @@ const createRideSchema = z.object({
 });
 
 // Helper to transition ride status
-function transitionRide(res, ride, targetState, additionalFields = {}) {
+async function transitionRide(res, rideId, targetState, additionalFields = {}) {
+  let ride;
+
+  if (isDbConnected()) {
+    try {
+      const selectRes = await query('SELECT * FROM rides WHERE id = $1 FOR UPDATE', [rideId]);
+      if (selectRes.rows.length === 0) {
+        return res.status(404).json({ success: false, error: 'NotFound', message: 'Ride not found' });
+      }
+      ride = selectRes.rows[0];
+
+      if (!isValidTransition(ride.status, targetState)) {
+        logger.warn({ rideId, from: ride.status, to: targetState }, 'Illegal state transition rejected by PostgreSQL');
+        return res.status(400).json({
+          success: false,
+          error: 'InvalidStateTransition',
+          message: `Cannot transition ride from '${ride.status}' to '${targetState}'.`,
+        });
+      }
+
+      const driverId = additionalFields.driver_id !== undefined ? additionalFields.driver_id : ride.driver_id;
+      const updateRes = await query(
+        `UPDATE rides 
+         SET status = $1, driver_id = $2, updated_at = NOW() 
+         WHERE id = $3 
+         RETURNING *`,
+        [targetState, driverId, rideId]
+      );
+
+      // Record outbox event inside transactional flow
+      await query(
+        `INSERT INTO outbox_events (id, aggregate_type, aggregate_id, event_type, payload, status)
+         VALUES ($1, $2, $3, $4, $5, 'PENDING')`,
+        [
+          `outbox-${Date.now()}-${Math.random().toString(36).substring(2, 6)}`,
+          'RIDE',
+          rideId,
+          `RIDE_${targetState}`,
+          JSON.stringify(updateRes.rows[0])
+        ]
+      );
+
+      logger.info({ rideId, targetState }, 'Ride state updated in PostgreSQL');
+      return res.json({
+        success: true,
+        message: `Ride successfully transitioned to ${targetState}`,
+        data: updateRes.rows[0],
+      });
+    } catch (err) {
+      logger.error(err, 'PostgreSQL error during ride transition');
+    }
+  }
+
+  // Fallback to In-Memory store
+  ride = ridesStore.find(r => r.id === rideId);
+  if (!ride) {
+    return res.status(404).json({ success: false, error: 'NotFound', message: 'Ride not found' });
+  }
+
   if (!isValidTransition(ride.status, targetState)) {
-    logger.warn({ rideId: ride.id, from: ride.status, to: targetState }, 'Illegal state transition rejected');
     return res.status(400).json({
       success: false,
       error: 'InvalidStateTransition',
-      message: `Cannot transition ride from status '${ride.status}' to '${targetState}'.`,
+      message: `Cannot transition ride from '${ride.status}' to '${targetState}'.`,
     });
   }
 
-  const previousState = ride.status;
   ride.status = targetState;
   ride.updated_at = new Date().toISOString();
   Object.assign(ride, additionalFields);
 
-  logger.info({ rideId: ride.id, previousState, newState: targetState }, 'Ride state transitioned');
   return res.json({
     success: true,
     message: `Ride successfully transitioned to ${targetState}`,
@@ -61,35 +116,107 @@ function transitionRide(res, ride, targetState, additionalFields = {}) {
   });
 }
 
-// GET /api/v1/rides - List rides (supports ?status= and ?passenger_id=)
-router.get('/', (req, res) => {
+// GET /api/v1/rides - List rides
+router.get('/', async (req, res) => {
   const { status, passenger_id } = req.query;
+
+  if (isDbConnected()) {
+    try {
+      let sql = 'SELECT * FROM rides WHERE 1=1';
+      const params = [];
+
+      if (status) {
+        params.push(status);
+        sql += ` AND status = $${params.length}`;
+      }
+      if (passenger_id) {
+        params.push(passenger_id);
+        sql += ` AND passenger_id = $${params.length}`;
+      }
+      sql += ' ORDER BY updated_at DESC LIMIT 50';
+
+      const result = await query(sql, params);
+      return res.json({
+        success: true,
+        total: result.rowCount,
+        source: 'PostgreSQL',
+        data: result.rows,
+      });
+    } catch (err) {
+      logger.error(err, 'Error querying PostgreSQL rides, falling back to memory');
+    }
+  }
+
   let filtered = [...ridesStore];
-
-  if (status) {
-    filtered = filtered.filter(r => r.status === status);
-  }
-  if (passenger_id) {
-    filtered = filtered.filter(r => r.passenger_id === passenger_id);
-  }
-
-  // Sort by updated_at descending
+  if (status) filtered = filtered.filter(r => r.status === status);
+  if (passenger_id) filtered = filtered.filter(r => r.passenger_id === passenger_id);
   filtered.sort((a, b) => new Date(b.updated_at) - new Date(a.updated_at));
 
   res.json({
     success: true,
     total: filtered.length,
+    source: 'InMemoryStore',
     data: filtered,
   });
 });
 
 // POST /api/v1/rides - Create a new ride request
-router.post('/', (req, res) => {
+router.post('/', async (req, res) => {
   try {
     const validated = createRideSchema.parse(req.body);
+    const rideId = `ride-${Date.now()}-${Math.random().toString(36).substring(2, 7)}`;
+    const fare = Number((100 + Math.random() * 200).toFixed(2));
 
+    if (isDbConnected()) {
+      try {
+        const insertRes = await query(
+          `INSERT INTO rides (
+            id, passenger_id, status, pickup_address, pickup_latitude, pickup_longitude,
+            destination_address, destination_latitude, destination_longitude, fare_amount
+          ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+          RETURNING *`,
+          [
+            rideId,
+            validated.passenger_id,
+            RIDE_STATES.REQUESTED,
+            validated.pickup_address,
+            validated.pickup_latitude,
+            validated.pickup_longitude,
+            validated.destination_address,
+            validated.destination_latitude,
+            validated.destination_longitude,
+            fare
+          ]
+        );
+
+        // Transactional Outbox pattern: write event to outbox_events table
+        await query(
+          `INSERT INTO outbox_events (id, aggregate_type, aggregate_id, event_type, payload, status)
+           VALUES ($1, $2, $3, $4, $5, 'PENDING')`,
+          [
+            `outbox-${Date.now()}-${Math.random().toString(36).substring(2, 6)}`,
+            'RIDE',
+            rideId,
+            'RIDE_REQUESTED',
+            JSON.stringify(insertRes.rows[0])
+          ]
+        );
+
+        logger.info({ rideId }, 'New ride inserted into PostgreSQL with Outbox Event');
+        return res.status(201).json({
+          success: true,
+          message: 'Ride request created successfully.',
+          source: 'PostgreSQL',
+          data: insertRes.rows[0],
+        });
+      } catch (err) {
+        logger.error(err, 'Error inserting ride to PostgreSQL, falling back to memory');
+      }
+    }
+
+    // In-Memory store fallback
     const newRide = {
-      id: `ride-${Date.now()}-${Math.random().toString(36).substring(2, 7)}`,
+      id: rideId,
       passenger_id: validated.passenger_id,
       passenger_name: validated.passenger_name,
       driver_id: null,
@@ -100,104 +227,59 @@ router.post('/', (req, res) => {
       destination_address: validated.destination_address,
       destination_latitude: validated.destination_latitude,
       destination_longitude: validated.destination_longitude,
-      fare_amount: Number((100 + Math.random() * 200).toFixed(2)),
+      fare_amount: fare,
       created_at: new Date().toISOString(),
       updated_at: new Date().toISOString(),
     };
 
     ridesStore.push(newRide);
-    logger.info({ rideId: newRide.id, passengerId: newRide.passenger_id }, 'New ride requested');
-
     res.status(201).json({
       success: true,
       message: 'Ride request created successfully.',
+      source: 'InMemoryStore',
       data: newRide,
     });
   } catch (err) {
     if (err instanceof z.ZodError) {
-      return res.status(400).json({
-        success: false,
-        error: 'ValidationError',
-        details: err.errors,
-      });
+      return res.status(400).json({ success: false, error: 'ValidationError', details: err.errors });
     }
-    logger.error(err, 'Error creating ride request');
+    logger.error(err, 'Error creating ride');
     res.status(500).json({ success: false, error: 'InternalServerError' });
   }
 });
 
-// GET /api/v1/rides/:id - Get ride details
-router.get('/:id', (req, res) => {
-  const ride = ridesStore.find(r => r.id === req.params.id);
-  if (!ride) {
-    return res.status(404).json({
-      success: false,
-      error: 'NotFound',
-      message: `Ride with ID '${req.params.id}' was not found.`,
-    });
+// GET /api/v1/rides/:id
+router.get('/:id', async (req, res) => {
+  if (isDbConnected()) {
+    try {
+      const result = await query('SELECT * FROM rides WHERE id = $1', [req.params.id]);
+      if (result.rows.length > 0) {
+        return res.json({ success: true, source: 'PostgreSQL', data: result.rows[0] });
+      }
+    } catch (err) {
+      logger.error(err, 'PostgreSQL error fetching ride');
+    }
   }
-  res.json({ success: true, data: ride });
-});
 
-// POST /api/v1/rides/:id/cancel - Cancel ride
-router.post('/:id/cancel', (req, res) => {
   const ride = ridesStore.find(r => r.id === req.params.id);
   if (!ride) {
     return res.status(404).json({ success: false, error: 'NotFound', message: 'Ride not found' });
   }
-  return transitionRide(res, ride, RIDE_STATES.CANCELLED);
+  res.json({ success: true, source: 'InMemoryStore', data: ride });
 });
 
-// POST /api/v1/rides/:id/accept - Driver accepts ride
+// State Transitions
+router.post('/:id/cancel', (req, res) => transitionRide(res, req.params.id, RIDE_STATES.CANCELLED));
 router.post('/:id/accept', (req, res) => {
-  const ride = ridesStore.find(r => r.id === req.params.id);
-  if (!ride) {
-    return res.status(404).json({ success: false, error: 'NotFound', message: 'Ride not found' });
-  }
   const { driver_id } = req.body;
   if (!driver_id) {
     return res.status(400).json({ success: false, error: 'ValidationError', message: 'driver_id is required' });
   }
-
-  // If driver was not yet assigned, bind driver
-  return transitionRide(res, ride, RIDE_STATES.DRIVER_ACCEPTED, { driver_id });
+  return transitionRide(res, req.params.id, RIDE_STATES.DRIVER_ACCEPTED, { driver_id });
 });
-
-// POST /api/v1/rides/:id/reject - Driver rejects ride offer
-router.post('/:id/reject', (req, res) => {
-  const ride = ridesStore.find(r => r.id === req.params.id);
-  if (!ride) {
-    return res.status(404).json({ success: false, error: 'NotFound', message: 'Ride not found' });
-  }
-  // Transition back to PENDING so dispatch worker can reassign
-  return transitionRide(res, ride, RIDE_STATES.PENDING, { driver_id: null });
-});
-
-// POST /api/v1/rides/:id/arrived - Driver arrived at pickup
-router.post('/:id/arrived', (req, res) => {
-  const ride = ridesStore.find(r => r.id === req.params.id);
-  if (!ride) {
-    return res.status(404).json({ success: false, error: 'NotFound', message: 'Ride not found' });
-  }
-  return transitionRide(res, ride, RIDE_STATES.DRIVER_ARRIVED);
-});
-
-// POST /api/v1/rides/:id/start - Trip starts
-router.post('/:id/start', (req, res) => {
-  const ride = ridesStore.find(r => r.id === req.params.id);
-  if (!ride) {
-    return res.status(404).json({ success: false, error: 'NotFound', message: 'Ride not found' });
-  }
-  return transitionRide(res, ride, RIDE_STATES.IN_PROGRESS);
-});
-
-// POST /api/v1/rides/:id/complete - Trip completes
-router.post('/:id/complete', (req, res) => {
-  const ride = ridesStore.find(r => r.id === req.params.id);
-  if (!ride) {
-    return res.status(404).json({ success: false, error: 'NotFound', message: 'Ride not found' });
-  }
-  return transitionRide(res, ride, RIDE_STATES.COMPLETED);
-});
+router.post('/:id/reject', (req, res) => transitionRide(res, req.params.id, RIDE_STATES.PENDING, { driver_id: null }));
+router.post('/:id/arrived', (req, res) => transitionRide(res, req.params.id, RIDE_STATES.DRIVER_ARRIVED));
+router.post('/:id/start', (req, res) => transitionRide(res, req.params.id, RIDE_STATES.IN_PROGRESS));
+router.post('/:id/complete', (req, res) => transitionRide(res, req.params.id, RIDE_STATES.COMPLETED));
 
 export default router;

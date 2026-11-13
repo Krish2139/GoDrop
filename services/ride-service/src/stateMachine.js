@@ -37,3 +37,4 @@ export function isValidTransition(currentState, targetState) {
   const allowed = VALID_TRANSITIONS[currentState] || [];
   return allowed.includes(targetState);
 }
+

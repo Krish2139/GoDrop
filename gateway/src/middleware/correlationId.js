@@ -10,3 +10,4 @@ export function correlationIdMiddleware(req, res, next) {
   res.setHeader('x-request-id', correlationId);
   next();
 }
+

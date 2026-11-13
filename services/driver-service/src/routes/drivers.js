@@ -1,6 +1,7 @@
 import express from 'express';
 import { z } from 'zod';
 import { logger } from '../logger.js';
+import { query, isDbConnected } from '../db.js';
 
 const router = express.Router();
 
@@ -11,7 +12,7 @@ export const DRIVER_STATUS = {
   ON_TRIP: 'ON_TRIP',
 };
 
-// Seed drivers for local simulation (will be replaced by PostgreSQL in Milestone 3)
+// Resilient In-Memory fallback store
 export const driversStore = [
   {
     id: 'driver-seed-1',
@@ -57,10 +58,8 @@ export const driversStore = [
   }
 ];
 
-// In-memory offers queue for drivers
 export const offersStore = [];
 
-// Zod validation schemas
 const registerDriverSchema = z.object({
   name: z.string().min(2, 'Driver name required'),
   phone: z.string().min(8, 'Valid phone required'),
@@ -80,9 +79,8 @@ const locationSchema = z.object({
   heading: z.number().min(0).max(360).optional().default(0),
 });
 
-// Haversine formula calculation for approximate distance in kilometers
 function calculateHaversineDistance(lat1, lon1, lat2, lon2) {
-  const R = 6371; // Earth radius in KM
+  const R = 6371;
   const dLat = (lat2 - lat1) * Math.PI / 180;
   const dLon = (lon2 - lon1) * Math.PI / 180;
   const a =
@@ -93,22 +91,44 @@ function calculateHaversineDistance(lat1, lon1, lat2, lon2) {
   return Number((R * c).toFixed(2));
 }
 
-// GET /api/v1/drivers - List drivers (supports ?status=)
-router.get('/', (req, res) => {
+// GET /api/v1/drivers - List drivers
+router.get('/', async (req, res) => {
   const { status } = req.query;
-  let result = [...driversStore];
-  if (status) {
-    result = result.filter(d => d.status === status);
+
+  if (isDbConnected()) {
+    try {
+      let sql = 'SELECT * FROM drivers';
+      const params = [];
+      if (status) {
+        params.push(status);
+        sql += ' WHERE status = $1';
+      }
+      sql += ' ORDER BY updated_at DESC';
+
+      const result = await query(sql, params);
+      return res.json({
+        success: true,
+        total: result.rowCount,
+        source: 'PostgreSQL',
+        data: result.rows,
+      });
+    } catch (err) {
+      logger.error(err, 'PostgreSQL error querying drivers');
+    }
   }
+
+  let result = [...driversStore];
+  if (status) result = result.filter(d => d.status === status);
   res.json({
     success: true,
     total: result.length,
+    source: 'InMemoryStore',
     data: result,
   });
 });
 
-// GET /api/v1/drivers/nearby - Retrieve eligible nearby drivers (used by dispatch worker)
-router.get('/nearby', (req, res) => {
+// GET /api/v1/drivers/nearby - Retrieve eligible nearby drivers (Haversine formula)
+router.get('/nearby', async (req, res) => {
   const lat = parseFloat(req.query.lat);
   const lng = parseFloat(req.query.lng);
   const maxDistanceKm = parseFloat(req.query.radiusKm) || 10;
@@ -121,11 +141,23 @@ router.get('/nearby', (req, res) => {
     });
   }
 
-  // Filter only AVAILABLE drivers
-  const eligible = driversStore.filter(d => d.status === DRIVER_STATUS.AVAILABLE);
+  let candidates = [];
+  let source = 'InMemoryStore';
 
-  // Compute distance and sort by proximity
-  const ranked = eligible
+  if (isDbConnected()) {
+    try {
+      const dbRes = await query('SELECT * FROM drivers WHERE status = $1', [DRIVER_STATUS.AVAILABLE]);
+      candidates = dbRes.rows;
+      source = 'PostgreSQL';
+    } catch (err) {
+      logger.error(err, 'PostgreSQL error querying nearby drivers');
+      candidates = driversStore.filter(d => d.status === DRIVER_STATUS.AVAILABLE);
+    }
+  } else {
+    candidates = driversStore.filter(d => d.status === DRIVER_STATUS.AVAILABLE);
+  }
+
+  const ranked = candidates
     .map(driver => {
       const distanceKm = calculateHaversineDistance(
         lat,
@@ -142,23 +174,64 @@ router.get('/nearby', (req, res) => {
     .filter(d => d.distance_km <= maxDistanceKm)
     .sort((a, b) => a.distance_km - b.distance_km);
 
-  logger.info({ pickup: { lat, lng }, candidatesFound: ranked.length }, 'Nearby eligible drivers calculated');
+  logger.info({ pickup: { lat, lng }, candidatesFound: ranked.length, source }, 'Nearby drivers ranked');
 
   res.json({
     success: true,
     count: ranked.length,
+    source,
     data: ranked,
   });
 });
 
 // POST /api/v1/drivers - Register a new driver
-router.post('/', (req, res) => {
+router.post('/', async (req, res) => {
   try {
     const validated = registerDriverSchema.parse(req.body);
+    const driverId = `driver-${Date.now()}-${Math.random().toString(36).substring(2, 6)}`;
+    const userId = `user-${Date.now()}`;
+
+    if (isDbConnected()) {
+      try {
+        // Ensure user record exists first (foreign key requirement)
+        await query(
+          `INSERT INTO users (id, email, password_hash, role, name, phone)
+           VALUES ($1, $2, $3, 'DRIVER', $4, $5)
+           ON CONFLICT DO NOTHING`,
+          [userId, `${driverId}@rideflow.io`, 'driver123', validated.name, validated.phone]
+        );
+
+        const insertRes = await query(
+          `INSERT INTO drivers (
+            id, user_id, vehicle_model, license_plate, rating, status, current_latitude, current_longitude, heading
+          ) VALUES ($1, $2, $3, $4, 5.0, $5, $6, $7, 0)
+          RETURNING *`,
+          [
+            driverId,
+            userId,
+            validated.vehicle_model,
+            validated.license_plate,
+            DRIVER_STATUS.AVAILABLE,
+            validated.latitude,
+            validated.longitude,
+          ]
+        );
+
+        logger.info({ driverId }, 'Driver registered in PostgreSQL');
+        return res.status(201).json({
+          success: true,
+          message: 'Driver profile registered successfully',
+          source: 'PostgreSQL',
+          data: insertRes.rows[0],
+        });
+      } catch (err) {
+        logger.error(err, 'PostgreSQL error creating driver');
+      }
+    }
 
     const newDriver = {
-      id: `driver-${Date.now()}-${Math.random().toString(36).substring(2, 6)}`,
-      user_id: `user-${Date.now()}`,
+      id: driverId,
+      user_id: userId,
       name: validated.name,
       phone: validated.phone,
       vehicle_model: validated.vehicle_model,
@@ -172,11 +245,10 @@ router.post('/', (req, res) => {
     };
 
     driversStore.push(newDriver);
-    logger.info({ driverId: newDriver.id, name: newDriver.name }, 'New driver registered');
-
     res.status(201).json({
       success: true,
       message: 'Driver profile registered successfully',
+      source: 'InMemoryStore',
       data: newDriver,
     });
   } catch (err) {
@@ -188,33 +260,61 @@ router.post('/', (req, res) => {
   }
 });
 
-// GET /api/v1/drivers/:id - Get driver profile
-router.get('/:id', (req, res) => {
+// GET /api/v1/drivers/:id
+router.get('/:id', async (req, res) => {
+  if (isDbConnected()) {
+    try {
+      const resDb = await query('SELECT * FROM drivers WHERE id = $1', [req.params.id]);
+      if (resDb.rows.length > 0) {
+        return res.json({ success: true, source: 'PostgreSQL', data: resDb.rows[0] });
+      }
+    } catch (err) {
+      logger.error(err, 'PostgreSQL error fetching driver');
+    }
+  }
+
   const driver = driversStore.find(d => d.id === req.params.id);
   if (!driver) {
     return res.status(404).json({ success: false, error: 'NotFound', message: 'Driver not found' });
   }
-  res.json({ success: true, data: driver });
+  res.json({ success: true, source: 'InMemoryStore', data: driver });
 });
 
-// PATCH /api/v1/drivers/:id/availability - Toggle Online/Offline
-router.patch('/:id/availability', (req, res) => {
+// PATCH /api/v1/drivers/:id/availability
+router.patch('/:id/availability', async (req, res) => {
   try {
+    const { status } = availabilitySchema.parse(req.body);
+
+    if (isDbConnected()) {
+      try {
+        const updateRes = await query(
+          'UPDATE drivers SET status = $1, updated_at = NOW() WHERE id = $2 RETURNING *',
+          [status, req.params.id]
+        );
+        if (updateRes.rows.length > 0) {
+          return res.json({
+            success: true,
+            message: `Driver status updated to ${status}`,
+            source: 'PostgreSQL',
+            data: updateRes.rows[0],
+          });
+        }
+      } catch (err) {
+        logger.error(err, 'PostgreSQL error updating driver availability');
+      }
+    }
+
     const driver = driversStore.find(d => d.id === req.params.id);
     if (!driver) {
       return res.status(404).json({ success: false, error: 'NotFound', message: 'Driver not found' });
     }
-
-    const { status } = availabilitySchema.parse(req.body);
-    const prevStatus = driver.status;
     driver.status = status;
     driver.updated_at = new Date().toISOString();
-
-    logger.info({ driverId: driver.id, prevStatus, newStatus: status }, 'Driver availability updated');
 
     res.json({
       success: true,
       message: `Driver status updated to ${status}`,
+      source: 'InMemoryStore',
       data: driver,
     });
   } catch (err) {
@@ -225,15 +325,37 @@ router.patch('/:id/availability', (req, res) => {
   }
 });
 
-// PATCH /api/v1/drivers/:id/location - Update simulated GPS coordinates
-router.patch('/:id/location', (req, res) => {
+// PATCH /api/v1/drivers/:id/location
+router.patch('/:id/location', async (req, res) => {
   try {
+    const { latitude, longitude, heading } = locationSchema.parse(req.body);
+
+    if (isDbConnected()) {
+      try {
+        const updateRes = await query(
+          `UPDATE drivers 
+           SET current_latitude = $1, current_longitude = $2, heading = COALESCE($3, heading), updated_at = NOW()
+           WHERE id = $4 
+           RETURNING id, current_latitude, current_longitude, heading, updated_at`,
+          [latitude, longitude, heading, req.params.id]
+        );
+        if (updateRes.rows.length > 0) {
+          return res.json({
+            success: true,
+            message: 'Driver GPS location updated',
+            source: 'PostgreSQL',
+            data: updateRes.rows[0],
+          });
+        }
+      } catch (err) {
+        logger.error(err, 'PostgreSQL error updating driver location');
+      }
+    }
+
     const driver = driversStore.find(d => d.id === req.params.id);
     if (!driver) {
       return res.status(404).json({ success: false, error: 'NotFound', message: 'Driver not found' });
     }
-
-    const { latitude, longitude, heading } = locationSchema.parse(req.body);
     driver.current_latitude = latitude;
     driver.current_longitude = longitude;
     if (heading !== undefined) driver.heading = heading;
@@ -242,6 +364,7 @@ router.patch('/:id/location', (req, res) => {
     res.json({
       success: true,
       message: 'Driver GPS location updated',
+      source: 'InMemoryStore',
       data: {
         id: driver.id,
         latitude: driver.current_latitude,
@@ -258,12 +381,33 @@ router.patch('/:id/location', (req, res) => {
   }
 });
 
-// GET /api/v1/drivers/:id/offers - View pending ride offers
-router.get('/:id/offers', (req, res) => {
+// GET /api/v1/drivers/:id/offers
+router.get('/:id/offers', async (req, res) => {
+  if (isDbConnected()) {
+    try {
+      const result = await query(
+        `SELECT a.*, r.pickup_address, r.destination_address, r.fare_amount
+         FROM ride_assignments a
+         JOIN rides r ON a.ride_id = r.id
+         WHERE a.driver_id = $1 AND a.status = 'OFFERED' AND a.expires_at > NOW()`,
+        [req.params.id]
+      );
+      return res.json({
+        success: true,
+        total: result.rowCount,
+        source: 'PostgreSQL',
+        data: result.rows,
+      });
+    } catch (err) {
+      logger.error(err, 'PostgreSQL error fetching offers');
+    }
+  }
+
   const driverOffers = offersStore.filter(o => o.driver_id === req.params.id && o.status === 'PENDING');
   res.json({
     success: true,
     total: driverOffers.length,
+    source: 'InMemoryStore',
     data: driverOffers,
   });
 });
