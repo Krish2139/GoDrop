@@ -18,6 +18,7 @@ import {
   Play, 
   Flag 
 } from 'lucide-react';
+import RideLifecycleTimeline from '../components/RideLifecycleTimeline';
 import './DriverPortal.css';
 
 const GPS_WAYPOINTS = [
@@ -300,6 +301,8 @@ const DriverPortal = () => {
 
           {activeRide ? (
             <div className="active-trip-console">
+              <RideLifecycleTimeline currentStatus={activeRide.status} />
+
               <div className="trip-passenger-info">
                 <div>Passenger: <b>{activeRide.passenger_name || 'Passenger'}</b></div>
                 <div>Fare: <b className="fare-tag">₹{activeRide.fare_amount}</b></div>

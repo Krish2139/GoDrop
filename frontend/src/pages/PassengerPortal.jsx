@@ -18,6 +18,8 @@ import {
   ArrowRight,
   Sliders
 } from 'lucide-react';
+import StatCard from '../components/StatCard';
+import RideLifecycleTimeline from '../components/RideLifecycleTimeline';
 import './PassengerPortal.css';
 
 const LOCATION_PRESETS = [
@@ -255,6 +257,8 @@ const PassengerPortal = () => {
 
           {activeRide ? (
             <div className="active-ride-body">
+              <RideLifecycleTimeline currentStatus={activeRide.status} />
+
               <div className="trip-route-visual">
                 <div className="route-point">
                   <div className="dot green"></div>
