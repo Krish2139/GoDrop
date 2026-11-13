@@ -16,6 +16,7 @@
     "express": "^4.21.2",
     "helmet": "^8.0.0",
     "http-proxy-middleware": "^3.0.3",
+    "ioredis": "^6.0.0",
     "jsonwebtoken": "^9.0.2",
     "opossum": "^8.1.4",
     "pg": "^8.23.1",

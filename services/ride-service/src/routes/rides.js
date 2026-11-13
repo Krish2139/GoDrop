@@ -19,8 +19,23 @@ import {
   assignmentsStore,
   memoryDrivers 
 } from '../dispatchEngine.js';
+import { 
+  getCache, 
+  setCache, 
+  invalidateKey, 
+  invalidatePattern, 
+  rideCacheMetrics, 
+  isRedisConnected 
+} from '../redis.js';
 
 const router = express.Router();
+
+export async function invalidateRideCaches(rideId) {
+  await Promise.all([
+    invalidateKey(`cache:rides:${rideId}`),
+    invalidatePattern('cache:rides:list:*'),
+  ]);
+}
 
 // In-Memory store fallback
 export const ridesStore = [
@@ -59,7 +74,21 @@ const cancelRideSchema = z.object({
   reason: z.string().optional().default('Passenger requested cancellation'),
 });
 
-// Helper: Atomic State Transition with Outbox Pattern
+// GET /api/v1/rides/cache/metrics - Cache Telemetry
+router.get('/cache/metrics', (req, res) => {
+  res.json({
+    success: true,
+    redisConnected: isRedisConnected(),
+    metrics: {
+      hits: rideCacheMetrics.hits,
+      misses: rideCacheMetrics.misses,
+      hitRate: rideCacheMetrics.hitRate,
+      invalidations: rideCacheMetrics.invalidations,
+    },
+  });
+});
+
+// Helper: Atomic State Transition with Outbox Pattern & Cache Invalidation
 async function executeTransition(res, rideId, targetState, additionalFields = {}, outboxEventType = null) {
   if (isDbConnected()) {
     let client;
@@ -134,8 +163,9 @@ async function executeTransition(res, rideId, targetState, additionalFields = {}
       }
 
       await client.query('COMMIT');
+      await invalidateRideCaches(rideId);
 
-      logger.info({ rideId, previousStatus: ride.status, newStatus: targetState }, 'Atomic ride transition committed');
+      logger.info({ rideId, previousStatus: ride.status, newStatus: targetState }, 'Atomic ride transition committed & cache invalidated');
 
       return res.json({
         success: true,
@@ -175,6 +205,8 @@ async function executeTransition(res, rideId, targetState, additionalFields = {}
     if (d) d.status = 'AVAILABLE';
   }
 
+  await invalidateRideCaches(rideId);
+
   return res.json({
     success: true,
     message: `Ride state successfully transitioned to ${targetState}`,
@@ -183,10 +215,27 @@ async function executeTransition(res, rideId, targetState, additionalFields = {}
   });
 }
 
-// GET /api/v1/rides - Query and filter rides
+// GET /api/v1/rides - Query and filter rides (Cached with TTL 20s)
 router.get('/', async (req, res) => {
-  const { status, passenger_id, driver_id, limit = 50, page = 1 } = req.query;
+  try {
+    const { status, passenger_id, driver_id, limit = 50, page = 1 } = req.query;
+  const cacheKey = `cache:rides:list:${status || 'all'}:${passenger_id || 'all'}:${driver_id || 'all'}:${limit}:${page}`;
 
+  // 1. Check Redis Cache
+  const cachedList = await getCache(cacheKey);
+  if (cachedList) {
+    res.setHeader('X-Cache', 'HIT');
+    return res.json({
+      success: true,
+      total: cachedList.length,
+      source: 'Redis-Cache',
+      data: cachedList,
+    });
+  }
+
+  res.setHeader('X-Cache', 'MISS');
+
+  // 2. Cache Miss: Query Database
   if (isDbConnected()) {
     try {
       let sql = `
@@ -218,6 +267,8 @@ router.get('/', async (req, res) => {
       params.push(parseInt(limit, 10), (parseInt(page, 10) - 1) * parseInt(limit, 10));
 
       const result = await query(sql, params);
+      await setCache(cacheKey, result.rows, 20);
+
       return res.json({
         success: true,
         total: result.rowCount,
@@ -235,12 +286,18 @@ router.get('/', async (req, res) => {
   if (driver_id) filtered = filtered.filter(r => r.driver_id === driver_id);
   filtered.sort((a, b) => new Date(b.updated_at) - new Date(a.updated_at));
 
-  res.json({
-    success: true,
-    total: filtered.length,
-    source: 'InMemoryStore',
-    data: filtered,
-  });
+    await setCache(cacheKey, filtered, 20);
+
+    return res.json({
+      success: true,
+      total: filtered.length,
+      source: 'InMemoryStore',
+      data: filtered,
+    });
+  } catch (err) {
+    logger.error(err, 'Error in GET /rides');
+    res.status(500).json({ success: false, error: 'InternalServerError' });
+  }
 });
 
 // POST /api/v1/rides - Create Ride Request & Trigger Auto-Dispatch
@@ -400,8 +457,20 @@ router.get('/:id/assignments', async (req, res) => {
   });
 });
 
-// GET /api/v1/rides/:id - Get Single Ride Details
+// GET /api/v1/rides/:id - Get Single Ride Details (Cached with TTL 30s)
 router.get('/:id', async (req, res) => {
+  const cacheKey = `cache:rides:${req.params.id}`;
+
+  // 1. Check Redis Cache
+  const cachedRide = await getCache(cacheKey);
+  if (cachedRide) {
+    res.setHeader('X-Cache', 'HIT');
+    return res.json({ success: true, source: 'Redis-Cache', data: cachedRide });
+  }
+
+  res.setHeader('X-Cache', 'MISS');
+
+  // 2. Cache Miss: Query Database
   if (isDbConnected()) {
     try {
       const result = await query(
@@ -413,6 +482,7 @@ router.get('/:id', async (req, res) => {
         [req.params.id]
       );
       if (result.rows.length > 0) {
+        await setCache(cacheKey, result.rows[0], 30);
         return res.json({ success: true, source: 'PostgreSQL', data: result.rows[0] });
       }
     } catch (err) {
@@ -424,10 +494,11 @@ router.get('/:id', async (req, res) => {
   if (!ride) {
     return res.status(404).json({ success: false, error: 'NotFound', message: 'Ride not found' });
   }
+  await setCache(cacheKey, ride, 30);
   res.json({ success: true, source: 'InMemoryStore', data: ride });
 });
 
-// POST /api/v1/rides/:id/cancel - Cancel Ride (Releases driver if assigned)
+// POST /api/v1/rides/:id/cancel - Cancel Ride (Releases driver if assigned & invalidates cache)
 router.post('/:id/cancel', async (req, res) => {
   const { reason } = cancelRideSchema.parse(req.body || {});
 
@@ -484,6 +555,8 @@ router.post('/:id/cancel', async (req, res) => {
       );
 
       await client.query('COMMIT');
+      await invalidateRideCaches(req.params.id);
+
       return res.json({
         success: true,
         message: 'Ride successfully cancelled. Reserved driver released.',
@@ -499,6 +572,7 @@ router.post('/:id/cancel', async (req, res) => {
   }
 
   // In-Memory Fallback
+  await invalidateRideCaches(req.params.id);
   return executeTransition(res, req.params.id, RIDE_STATES.CANCELLED, { cancellation_reason: reason });
 });
 

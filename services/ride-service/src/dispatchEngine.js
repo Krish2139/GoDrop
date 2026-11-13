@@ -2,6 +2,14 @@ import { pool, isDbConnected, query } from './db.js';
 import { logger } from './logger.js';
 import { calculateHaversineDistance, RIDE_STATES } from './stateMachine.js';
 import { ridesStore } from './routes/rides.js';
+import { invalidateKey, invalidatePattern } from './redis.js';
+
+async function invalidateRide(rideId) {
+  await Promise.all([
+    invalidateKey(`cache:rides:${rideId}`),
+    invalidatePattern('cache:rides:list:*'),
+  ]);
+}
 
 export const MAX_DISPATCH_RADIUS_KM = 25.0; // Ahmedabad Metro search envelope (up to Gandhinagar/GIFT City)
 export const OFFER_TIMEOUT_SECONDS = 30;
@@ -151,6 +159,7 @@ export async function dispatchRide(rideId) {
         );
 
         await client.query('COMMIT');
+      await invalidateRide(rideId);
         logger.warn({ rideId }, 'No eligible drivers available. Ride moved to PENDING status.');
         return {
           success: true,
@@ -184,6 +193,7 @@ export async function dispatchRide(rideId) {
           [rideId]
         );
         await client.query('COMMIT');
+      await invalidateRide(rideId);
         return {
           success: true,
           dispatched: false,
@@ -219,6 +229,7 @@ export async function dispatchRide(rideId) {
           [rideId]
         );
         await client.query('COMMIT');
+      await invalidateRide(rideId);
         return {
           success: true,
           dispatched: false,
@@ -274,6 +285,7 @@ export async function dispatchRide(rideId) {
       );
 
       await client.query('COMMIT');
+      await invalidateRide(rideId);
 
       logger.info({
         rideId,
@@ -432,6 +444,7 @@ export async function acceptOffer(rideId, driverId) {
           [driverId]
         );
         await client.query('COMMIT');
+      await invalidateRide(rideId);
         return { success: false, error: 'OfferExpired', message: 'This ride offer has expired.' };
       }
 
@@ -465,6 +478,7 @@ export async function acceptOffer(rideId, driverId) {
       );
 
       await client.query('COMMIT');
+      await invalidateRide(rideId);
 
       logger.info({ rideId, driverId }, 'Driver successfully accepted offer');
       return { success: true, status: 'DRIVER_ACCEPTED', ride: rideRes.rows[0] };
@@ -545,6 +559,7 @@ export async function rejectOffer(rideId, driverId, reason = 'Driver declined') 
       );
 
       await client.query('COMMIT');
+      await invalidateRide(rideId);
       logger.info({ rideId, driverId }, 'Driver rejection committed: Triggering automatic re-dispatch');
     } catch (err) {
       if (client) await client.query('ROLLBACK');
@@ -645,6 +660,7 @@ export async function expireOffer(rideId) {
       );
 
       await client.query('COMMIT');
+      await invalidateRide(rideId);
     } catch (err) {
       if (client) await client.query('ROLLBACK');
       logger.error(err, 'PostgreSQL error expiring offer');
@@ -676,3 +692,4 @@ export async function expireOffer(rideId) {
   const nextDispatch = await dispatchRide(rideId);
   return { success: true, message: 'Offer expired (InMemory). Re-dispatched.', nextDispatch };
 }
+

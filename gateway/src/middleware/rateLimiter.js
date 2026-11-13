@@ -1,14 +1,11 @@
 import { logger } from '../logger.js';
+import { consumeToken, isRedisConnected, redisGatewayMetrics } from '../redis.js';
 
 /**
- * Token Bucket Rate Limiter
- * 
- * Capacity: Maximum burst tokens.
- * Refill Rate: Tokens added per interval.
- * Returns HTTP 429 when capacity is exceeded.
+ * In-Memory Token Bucket Fallback
  */
 class TokenBucket {
-  constructor(capacity = 100, refillRatePerSec = 2) {
+  constructor(capacity = 100, refillRatePerSec = 5) {
     this.capacity = capacity;
     this.tokens = capacity;
     this.refillRatePerSec = refillRatePerSec;
@@ -39,60 +36,97 @@ class TokenBucket {
   }
 }
 
-// Map of IP addresses to TokenBucket instances
-const buckets = new Map();
+// In-Memory store fallback
+const memoryBuckets = new Map();
 
-// Metrics tracking for the admin dashboard
+// Global Metrics for Rate Limiting
 export const rateLimitMetrics = {
   totalRequestsChecked: 0,
   rateLimitExceededCount: 0,
-  activeTrackedIps: 0,
+  activeTrackedClients: 0,
+  redisBackedLimiting: false,
 };
 
 /**
- * Rate Limiting Middleware
- * @param {Object} options
+ * Distributed Token Bucket Rate Limiting Middleware
+ * Backed by Redis with seamless in-memory fallback.
  */
 export function rateLimiter(options = {}) {
-  const capacity = options.capacity || 100; // max burst
-  const refillRatePerSec = options.refillRatePerSec || 2; // ~120/min
+  const capacity = options.capacity || 100;
+  const refillRatePerSec = options.refillRatePerSec || 5;
 
-  return (req, res, next) => {
-    // Exclude health checks from rate limiting
-    if (req.path.startsWith('/health')) {
+  return async (req, res, next) => {
+    // Exempt health probes and metrics from rate limiting
+    if (req.path.startsWith('/health') || req.path === '/api/v1/metrics') {
       return next();
     }
 
-    const clientIp = req.ip || req.connection.remoteAddress || '127.0.0.1';
+    rateLimitMetrics.totalRequestsChecked++;
+    const identifier = req.headers['authorization'] 
+      ? `user:${req.headers['authorization'].slice(-16)}` 
+      : (req.ip || req.connection.remoteAddress || '127.0.0.1');
 
-    if (!buckets.has(clientIp)) {
-      buckets.set(clientIp, new TokenBucket(capacity, refillRatePerSec));
+    let allowed = false;
+    let remaining = capacity;
+    let rateLimiterSource = 'Memory';
+
+    // 1. Try Distributed Redis Rate Limiter first
+    if (isRedisConnected()) {
+      rateLimitMetrics.redisBackedLimiting = true;
+      const redisResult = await consumeToken(identifier, capacity, refillRatePerSec, 1);
+      if (redisResult) {
+        allowed = redisResult.allowed;
+        remaining = redisResult.remaining;
+        rateLimiterSource = 'Redis-Distributed';
+      }
     }
 
-    const bucket = buckets.get(clientIp);
-    rateLimitMetrics.totalRequestsChecked++;
-    rateLimitMetrics.activeTrackedIps = buckets.size;
+    // 2. Graceful Fallback to Local In-Memory Token Bucket if Redis was offline or eval failed
+    if (rateLimiterSource === 'Memory') {
+      rateLimitMetrics.redisBackedLimiting = false;
+      redisGatewayMetrics.fallbackToMemoryCount++;
 
-    const remaining = bucket.getRemaining();
+      if (!memoryBuckets.has(identifier)) {
+        memoryBuckets.set(identifier, new TokenBucket(capacity, refillRatePerSec));
+      }
+      const bucket = memoryBuckets.get(identifier);
+      allowed = bucket.tryConsume(1);
+      remaining = bucket.getRemaining();
+      rateLimitMetrics.activeTrackedClients = memoryBuckets.size;
+    }
+
+    // Set standard rate limit headers
     res.setHeader('X-RateLimit-Limit', capacity);
     res.setHeader('X-RateLimit-Remaining', remaining);
+    res.setHeader('X-RateLimit-Provider', rateLimiterSource);
 
-    if (!bucket.tryConsume(1)) {
+    if (!allowed) {
       rateLimitMetrics.rateLimitExceededCount++;
-      logger.warn({ ip: clientIp, path: req.path }, 'Rate limit exceeded [HTTP 429]');
+      redisGatewayMetrics.rateLimitBlocked429++;
 
-      res.setHeader('Retry-After', Math.ceil(1 / refillRatePerSec));
+      const retryAfterSeconds = Math.max(1, Math.ceil(1 / refillRatePerSec));
+      res.setHeader('Retry-After', retryAfterSeconds);
+
+      logger.warn({
+        identifier,
+        path: req.path,
+        source: rateLimiterSource,
+        capacity,
+        remaining: 0,
+      }, 'Distributed Rate limit exceeded [HTTP 429]');
+
       return res.status(429).json({
         success: false,
         error: 'TooManyRequests',
-        message: 'Rate limit exceeded. The system has applied backpressure. Please retry shortly.',
+        message: 'Rate limit capacity exceeded. Distributed token bucket has throttled this request.',
         limit: capacity,
         remaining: 0,
-        retryAfterSeconds: Math.ceil(1 / refillRatePerSec),
+        retryAfterSeconds,
+        provider: rateLimiterSource,
       });
     }
 
+    redisGatewayMetrics.rateLimitHits++;
     next();
   };
 }
-

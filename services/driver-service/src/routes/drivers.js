@@ -2,6 +2,14 @@ import express from 'express';
 import { z } from 'zod';
 import { logger } from '../logger.js';
 import { query, isDbConnected } from '../db.js';
+import { 
+  getCache, 
+  setCache, 
+  invalidateKey, 
+  invalidatePattern, 
+  driverCacheMetrics,
+  isRedisConnected 
+} from '../redis.js';
 
 const router = express.Router();
 
@@ -91,10 +99,49 @@ function calculateHaversineDistance(lat1, lon1, lat2, lon2) {
   return Number((R * c).toFixed(2));
 }
 
-// GET /api/v1/drivers - List drivers
+// Invalidate driver related caches
+async function invalidateDriverCaches(driverId) {
+  await Promise.all([
+    invalidateKey(`cache:drivers:profile:${driverId}`),
+    invalidatePattern('cache:drivers:list:*'),
+    invalidatePattern('cache:drivers:nearby:*'),
+  ]);
+}
+
+// GET /api/v1/drivers/cache/metrics - Telemetry
+router.get('/cache/metrics', (req, res) => {
+  res.json({
+    success: true,
+    redisConnected: isRedisConnected(),
+    metrics: {
+      hits: driverCacheMetrics.hits,
+      misses: driverCacheMetrics.misses,
+      hitRate: driverCacheMetrics.hitRate,
+      invalidations: driverCacheMetrics.invalidations,
+    },
+  });
+});
+
+// GET /api/v1/drivers - List drivers (Cached with TTL 45s)
 router.get('/', async (req, res) => {
   const { status } = req.query;
+  const cacheKey = `cache:drivers:list:${status || 'all'}`;
 
+  // 1. Check Redis Cache
+  const cachedData = await getCache(cacheKey);
+  if (cachedData) {
+    res.setHeader('X-Cache', 'HIT');
+    return res.json({
+      success: true,
+      total: cachedData.length,
+      source: 'Redis-Cache',
+      data: cachedData,
+    });
+  }
+
+  res.setHeader('X-Cache', 'MISS');
+
+  // 2. Cache Miss: Fetch from PostgreSQL / Memory
   if (isDbConnected()) {
     try {
       let sql = 'SELECT * FROM drivers';
@@ -106,6 +153,8 @@ router.get('/', async (req, res) => {
       sql += ' ORDER BY updated_at DESC';
 
       const result = await query(sql, params);
+      await setCache(cacheKey, result.rows, 45);
+
       return res.json({
         success: true,
         total: result.rowCount,
@@ -119,6 +168,8 @@ router.get('/', async (req, res) => {
 
   let result = [...driversStore];
   if (status) result = result.filter(d => d.status === status);
+  await setCache(cacheKey, result, 45);
+
   res.json({
     success: true,
     total: result.length,
@@ -127,7 +178,7 @@ router.get('/', async (req, res) => {
   });
 });
 
-// GET /api/v1/drivers/nearby - Retrieve eligible nearby drivers (Haversine formula)
+// GET /api/v1/drivers/nearby - Retrieve eligible nearby drivers (Cached with TTL 15s)
 router.get('/nearby', async (req, res) => {
   const lat = parseFloat(req.query.lat);
   const lng = parseFloat(req.query.lng);
@@ -141,6 +192,23 @@ router.get('/nearby', async (req, res) => {
     });
   }
 
+  const cacheKey = `cache:drivers:nearby:${lat.toFixed(3)}:${lng.toFixed(3)}:${maxDistanceKm}`;
+
+  // 1. Check Redis Cache
+  const cachedNearby = await getCache(cacheKey);
+  if (cachedNearby) {
+    res.setHeader('X-Cache', 'HIT');
+    return res.json({
+      success: true,
+      count: cachedNearby.length,
+      source: 'Redis-Cache',
+      data: cachedNearby,
+    });
+  }
+
+  res.setHeader('X-Cache', 'MISS');
+
+  // 2. Cache Miss: Query & Compute
   let candidates = [];
   let source = 'InMemoryStore';
 
@@ -176,6 +244,9 @@ router.get('/nearby', async (req, res) => {
 
   logger.info({ pickup: { lat, lng }, candidatesFound: ranked.length, source }, 'Nearby drivers ranked');
 
+  // Cache nearby result for 15s
+  await setCache(cacheKey, ranked, 15);
+
   res.json({
     success: true,
     count: ranked.length,
@@ -193,7 +264,6 @@ router.post('/', async (req, res) => {
 
     if (isDbConnected()) {
       try {
-        // Ensure user record exists first (foreign key requirement)
         await query(
           `INSERT INTO users (id, email, password_hash, role, name, phone)
            VALUES ($1, $2, $3, 'DRIVER', $4, $5)
@@ -217,7 +287,9 @@ router.post('/', async (req, res) => {
           ]
         );
 
+        await invalidateDriverCaches(driverId);
         logger.info({ driverId }, 'Driver registered in PostgreSQL');
+
         return res.status(201).json({
           success: true,
           message: 'Driver profile registered successfully',
@@ -245,6 +317,8 @@ router.post('/', async (req, res) => {
     };
 
     driversStore.push(newDriver);
+    await invalidateDriverCaches(driverId);
+
     res.status(201).json({
       success: true,
       message: 'Driver profile registered successfully',
@@ -285,12 +359,25 @@ router.get('/profile', async (req, res) => {
   res.json({ success: true, source: 'InMemoryStore', data: driver });
 });
 
-// GET /api/v1/drivers/:id
+// GET /api/v1/drivers/:id - Single Driver Profile (Cached with TTL 120s)
 router.get('/:id', async (req, res) => {
+  const cacheKey = `cache:drivers:profile:${req.params.id}`;
+
+  // 1. Check Redis Cache
+  const cachedDriver = await getCache(cacheKey);
+  if (cachedDriver) {
+    res.setHeader('X-Cache', 'HIT');
+    return res.json({ success: true, source: 'Redis-Cache', data: cachedDriver });
+  }
+
+  res.setHeader('X-Cache', 'MISS');
+
+  // 2. Fetch from DB
   if (isDbConnected()) {
     try {
       const resDb = await query('SELECT * FROM drivers WHERE id = $1', [req.params.id]);
       if (resDb.rows.length > 0) {
+        await setCache(cacheKey, resDb.rows[0], 120);
         return res.json({ success: true, source: 'PostgreSQL', data: resDb.rows[0] });
       }
     } catch (err) {
@@ -302,10 +389,11 @@ router.get('/:id', async (req, res) => {
   if (!driver) {
     return res.status(404).json({ success: false, error: 'NotFound', message: 'Driver not found' });
   }
+  await setCache(cacheKey, driver, 120);
   res.json({ success: true, source: 'InMemoryStore', data: driver });
 });
 
-// PATCH /api/v1/drivers/:id/availability
+// PATCH /api/v1/drivers/:id/availability - Updates availability & invalidates cache
 router.patch('/:id/availability', async (req, res) => {
   try {
     const { status } = availabilitySchema.parse(req.body);
@@ -317,6 +405,8 @@ router.patch('/:id/availability', async (req, res) => {
           [status, req.params.id]
         );
         if (updateRes.rows.length > 0) {
+          // Invalidate driver cache
+          await invalidateDriverCaches(req.params.id);
           return res.json({
             success: true,
             message: `Driver status updated to ${status}`,
@@ -335,6 +425,7 @@ router.patch('/:id/availability', async (req, res) => {
     }
     driver.status = status;
     driver.updated_at = new Date().toISOString();
+    await invalidateDriverCaches(req.params.id);
 
     res.json({
       success: true,
@@ -350,7 +441,7 @@ router.patch('/:id/availability', async (req, res) => {
   }
 });
 
-// PATCH /api/v1/drivers/:id/location
+// PATCH /api/v1/drivers/:id/location - Updates GPS & invalidates proximity cache
 router.patch('/:id/location', async (req, res) => {
   try {
     const { latitude, longitude, heading } = locationSchema.parse(req.body);
@@ -365,6 +456,7 @@ router.patch('/:id/location', async (req, res) => {
           [latitude, longitude, heading, req.params.id]
         );
         if (updateRes.rows.length > 0) {
+          await invalidateDriverCaches(req.params.id);
           return res.json({
             success: true,
             message: 'Driver GPS location updated',
@@ -385,6 +477,7 @@ router.patch('/:id/location', async (req, res) => {
     driver.current_longitude = longitude;
     if (heading !== undefined) driver.heading = heading;
     driver.updated_at = new Date().toISOString();
+    await invalidateDriverCaches(req.params.id);
 
     res.json({
       success: true,
@@ -404,31 +497,6 @@ router.patch('/:id/location', async (req, res) => {
     }
     res.status(500).json({ success: false, error: 'InternalServerError' });
   }
-});
-
-// GET /api/v1/drivers/profile - Current driver profile
-router.get('/profile', async (req, res) => {
-  const userId = req.query.user_id;
-
-  if (isDbConnected()) {
-    try {
-      let result;
-      if (userId) {
-        result = await query('SELECT * FROM drivers WHERE user_id = $1 LIMIT 1', [userId]);
-      } else {
-        result = await query('SELECT * FROM drivers ORDER BY created_at ASC LIMIT 1');
-      }
-
-      if (result.rows.length > 0) {
-        return res.json({ success: true, source: 'PostgreSQL', data: result.rows[0] });
-      }
-    } catch (err) {
-      logger.error(err, 'PostgreSQL error fetching driver profile');
-    }
-  }
-
-  const driver = userId ? driversStore.find(d => d.user_id === userId) || driversStore[0] : driversStore[0];
-  res.json({ success: true, source: 'InMemoryStore', data: driver });
 });
 
 // GET /api/v1/drivers/:id/offers

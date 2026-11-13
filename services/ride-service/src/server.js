@@ -3,6 +3,7 @@ import cors from 'cors';
 import dotenv from 'dotenv';
 import ridesRouter from './routes/rides.js';
 import { logger } from './logger.js';
+import { isRedisConnected, rideCacheMetrics, getRedisClient } from './redis.js';
 
 dotenv.config();
 
@@ -34,6 +35,46 @@ app.get('/health', (req, res) => {
     service: 'ride-service',
     timestamp: new Date().toISOString(),
     uptime: process.uptime(),
+    redis: {
+      connected: isRedisConnected(),
+      provider: isRedisConnected() ? 'Redis 7 (Alpine)' : 'Degraded-DirectDB',
+      cacheMetrics: {
+        hits: rideCacheMetrics.hits,
+        misses: rideCacheMetrics.misses,
+        hitRate: rideCacheMetrics.hitRate,
+        invalidations: rideCacheMetrics.invalidations,
+      },
+    },
+  });
+});
+
+// GET /api/v1/metrics
+app.get('/api/v1/metrics', async (req, res) => {
+  let redisMemory = 'N/A';
+  if (isRedisConnected()) {
+    try {
+      const client = getRedisClient();
+      const rawInfo = await client.info('memory');
+      const usedMatch = rawInfo.match(/used_memory_human:(.+)/);
+      if (usedMatch) redisMemory = usedMatch[1].trim();
+    } catch {
+      // Non-blocking
+    }
+  }
+
+  res.json({
+    service: 'ride-service',
+    uptimeSeconds: Math.floor(process.uptime()),
+    redis: {
+      connected: isRedisConnected(),
+      memoryUsed: redisMemory,
+      cacheMetrics: {
+        hits: rideCacheMetrics.hits,
+        misses: rideCacheMetrics.misses,
+        hitRate: rideCacheMetrics.hitRate,
+        invalidations: rideCacheMetrics.invalidations,
+      },
+    },
   });
 });
 

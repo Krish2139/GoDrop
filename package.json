@@ -26,5 +26,8 @@
     "docker"
   ],
   "author": "RideFlow Academic Team",
-  "license": "ISC"
+  "license": "ISC",
+  "dependencies": {
+    "ioredis": "^6.0.0"
+  }
 }

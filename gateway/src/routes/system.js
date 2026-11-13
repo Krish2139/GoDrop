@@ -2,6 +2,7 @@ import express from 'express';
 import axios from 'axios';
 import { rateLimitMetrics } from '../middleware/rateLimiter.js';
 import { rideServiceBreaker, driverServiceBreaker } from '../middleware/circuitBreaker.js';
+import { isRedisConnected, redisGatewayMetrics, getRedisClient } from '../redis.js';
 
 const router = express.Router();
 const RIDE_SERVICE_URL = process.env.RIDE_SERVICE_URL || 'http://localhost:5001';
@@ -24,6 +25,10 @@ router.get('/health', (req, res) => {
     timestamp: new Date().toISOString(),
     uptime: process.uptime(),
     memoryUsageMb: Math.round(process.memoryUsage().heapUsed / 1024 / 1024),
+    redis: {
+      connected: isRedisConnected(),
+      mode: isRedisConnected() ? 'Distributed-Redis' : 'Degraded-Memory',
+    },
   });
 });
 
@@ -60,6 +65,7 @@ router.get('/health/services', async (req, res) => {
     gateway: {
       status: 'UP',
       timestamp: new Date().toISOString(),
+      redisConnected: isRedisConnected(),
     },
     services: {
       rideService: rideServiceHealth,
@@ -69,7 +75,19 @@ router.get('/health/services', async (req, res) => {
 });
 
 // GET /api/v1/metrics - System & Telemetry metrics
-router.get('/api/v1/metrics', (req, res) => {
+router.get('/api/v1/metrics', async (req, res) => {
+  let redisMemoryInfo = null;
+  if (isRedisConnected()) {
+    try {
+      const client = getRedisClient();
+      const rawInfo = await client.info('memory');
+      const usedMatch = rawInfo.match(/used_memory_human:(.+)/);
+      if (usedMatch) redisMemoryInfo = usedMatch[1].trim();
+    } catch {
+      // Non-blocking
+    }
+  }
+
   res.json({
     timestamp: new Date().toISOString(),
     uptimeSeconds: Math.floor(process.uptime()),
@@ -81,11 +99,18 @@ router.get('/api/v1/metrics', (req, res) => {
         '5xx': gatewayMetrics.status5xx,
       },
     },
+    redis: {
+      connected: isRedisConnected(),
+      provider: isRedisConnected() ? 'Redis 7 (Alpine)' : 'In-Memory Fallback',
+      memoryUsed: redisMemoryInfo || 'N/A',
+      metrics: redisGatewayMetrics,
+    },
     rateLimiter: {
-      algorithm: 'Token Bucket',
+      algorithm: 'Distributed Token Bucket (Redis)',
+      redisBacked: isRedisConnected(),
       totalChecked: rateLimitMetrics.totalRequestsChecked,
       exceededCount429: rateLimitMetrics.rateLimitExceededCount,
-      activeTrackedIps: rateLimitMetrics.activeTrackedIps,
+      activeTrackedClients: rateLimitMetrics.activeTrackedClients,
     },
     circuitBreakers: {
       rideService: {
