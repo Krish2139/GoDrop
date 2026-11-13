@@ -196,3 +196,4 @@ DROP TRIGGER IF EXISTS trg_rides_updated_at ON rides;
 CREATE TRIGGER trg_rides_updated_at
 BEFORE UPDATE ON rides
 FOR EACH ROW EXECUTE FUNCTION update_timestamp_column();
+

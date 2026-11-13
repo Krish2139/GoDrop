@@ -93,41 +93,67 @@
   gap: 1rem;
 }
 
-.system-status-pill {
+.btn-sm {
+  padding: 0.45rem 0.85rem;
+  font-size: 0.825rem;
+}
+
+.nav-user-profile {
   display: flex;
   align-items: center;
-  gap: 0.45rem;
-  padding: 0.35rem 0.75rem;
-  background-color: var(--success-bg);
-  border: 1px solid var(--success-border);
+  gap: 0.6rem;
+  background: var(--slate-50);
+  border: 1px solid var(--slate-200);
+  padding: 0.35rem 0.65rem;
   border-radius: var(--radius-full);
-  font-size: 0.75rem;
+}
+
+.user-name-text {
+  font-size: 0.85rem;
   font-weight: 600;
+  color: var(--slate-800);
+}
+
+.user-role-badge {
+  font-size: 0.65rem;
+  font-weight: 800;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  padding: 0.2rem 0.5rem;
+  border-radius: var(--radius-full);
+}
+
+.badge-role-passenger {
+  background-color: var(--primary-50);
+  color: var(--primary-700);
+  border: 1px solid var(--primary-200);
+}
+
+.badge-role-driver {
+  background-color: var(--success-bg);
   color: var(--success-text);
+  border: 1px solid var(--success-border);
 }
 
-.status-dot-pulse {
-  width: 7px;
-  height: 7px;
-  background-color: #10B981;
+.badge-role-admin {
+  background-color: #F3E8FF;
+  color: #7E22CE;
+  border: 1px solid #D8B4FE;
+}
+
+.btn-logout-icon {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--slate-400);
+  padding: 0.2rem;
   border-radius: 50%;
-  box-shadow: 0 0 0 0 rgba(16, 185, 129, 0.7);
-  animation: pulse-green 2s infinite;
+  transition: all var(--transition-fast);
 }
 
-@keyframes pulse-green {
-  0% {
-    transform: scale(0.95);
-    box-shadow: 0 0 0 0 rgba(16, 185, 129, 0.7);
-  }
-  70% {
-    transform: scale(1);
-    box-shadow: 0 0 0 6px rgba(16, 185, 129, 0);
-  }
-  100% {
-    transform: scale(0.95);
-    box-shadow: 0 0 0 0 rgba(16, 185, 129, 0);
-  }
+.btn-logout-icon:hover {
+  color: #DC2626;
+  background-color: var(--danger-bg);
 }
 
 .mobile-menu-toggle {
@@ -173,4 +199,3 @@
   background-color: var(--primary-50);
   color: var(--primary-700);
 }
-

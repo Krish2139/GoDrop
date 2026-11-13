@@ -5,6 +5,7 @@ import dotenv from 'dotenv';
 import { logger } from './logger.js';
 import { correlationIdMiddleware } from './middleware/correlationId.js';
 import { rateLimiter } from './middleware/rateLimiter.js';
+import { authenticateJwt, authorizeRoles } from './middleware/auth.js';
 import { 
   createBreakerProxy, 
   rideServiceBreaker, 
@@ -57,23 +58,30 @@ app.use((req, res, next) => {
   next();
 });
 
-// Distributed Token Bucket Rate Limiter (Capacity: 100 req, refill: 5/s)
+// Distributed Token Bucket Rate Limiter
 app.use(rateLimiter({ capacity: 100, refillRatePerSec: 5 }));
 
-// System & Health Endpoints
+// System & Health Endpoints (Public Health Checks)
 app.use(systemRouter);
 
 // Authentication Endpoints (/api/v1/auth)
 app.use('/api/v1/auth', authRouter);
 
-// Passenger Domain Endpoints (/api/v1/passengers)
-app.use('/api/v1/passengers', passengersRouter);
+// Passenger Domain Endpoints (RBAC Protected: PASSENGER or ADMIN)
+app.use('/api/v1/passengers', authenticateJwt, authorizeRoles('PASSENGER', 'ADMIN'), passengersRouter);
 
-// Proxy Routes with Circuit Breaker Protection
-// All /api/v1/rides/* traffic -> Ride Service (:5001)
+// Protected Ride Creation: Only Passengers & Admins can book a ride
+app.post('/api/v1/rides', authenticateJwt, authorizeRoles('PASSENGER', 'ADMIN'), createBreakerProxy(rideServiceBreaker, RIDE_SERVICE_URL));
+
+// Driver Availability & Location: Only Drivers & Admins can update driver status/GPS
+app.patch('/api/v1/drivers/:id/availability', authenticateJwt, authorizeRoles('DRIVER', 'ADMIN'), createBreakerProxy(driverServiceBreaker, DRIVER_SERVICE_URL));
+app.patch('/api/v1/drivers/:id/location', authenticateJwt, authorizeRoles('DRIVER', 'ADMIN'), createBreakerProxy(driverServiceBreaker, DRIVER_SERVICE_URL));
+
+// General Proxy Routes with Circuit Breaker Protection
+// All other /api/v1/rides/* traffic -> Ride Service (:5001)
 app.use('/api/v1/rides', createBreakerProxy(rideServiceBreaker, RIDE_SERVICE_URL));
 
-// All /api/v1/drivers/* traffic -> Driver Service (:5002)
+// All other /api/v1/drivers/* traffic -> Driver Service (:5002)
 app.use('/api/v1/drivers', createBreakerProxy(driverServiceBreaker, DRIVER_SERVICE_URL));
 
 // Root API Welcome / Gateway Info
@@ -82,12 +90,17 @@ app.get('/api/v1', (req, res) => {
     system: 'RideFlow API Gateway',
     version: '1.0.0-distributed',
     status: 'ACTIVE',
+    security: 'JWT + RBAC Enabled (bcrypt)',
     endpoints: {
       health: '/health',
       servicesHealth: '/health/services',
       metrics: '/api/v1/metrics',
-      auth: '/api/v1/auth',
-      passengers: '/api/v1/passengers',
+      auth: {
+        register: 'POST /api/v1/auth/register',
+        login: 'POST /api/v1/auth/login',
+        me: 'GET /api/v1/auth/me',
+      },
+      passengers: '/api/v1/passengers (Protected)',
       rides: '/api/v1/rides',
       drivers: '/api/v1/drivers',
     },
@@ -116,8 +129,7 @@ app.use((err, req, res, next) => {
 
 const server = app.listen(PORT, () => {
   logger.info(`🛡️ RideFlow API Gateway running on http://localhost:${PORT}`);
-  logger.info(`🔗 Downstream Ride Service URL: ${RIDE_SERVICE_URL}`);
-  logger.info(`🔗 Downstream Driver Service URL: ${DRIVER_SERVICE_URL}`);
+  logger.info(`🔒 Security: JWT & Role-Based Access Control (RBAC) Active`);
 });
 
 // Graceful shutdown handling
@@ -130,4 +142,3 @@ process.on('SIGTERM', () => {
 });
 
 export default app;
-

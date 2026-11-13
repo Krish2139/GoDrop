@@ -3,18 +3,26 @@
 -- Seed: 001_seed_data.sql
 -- ====================================================================
 
--- 1. Insert Initial Users
+-- 1. Insert Initial Users with Valid Bcrypt Hashes
+-- admin@rideflow.io / admin123
+-- passenger@rideflow.io / pass123
+-- driver@rideflow.io / driver123
 INSERT INTO users (id, email, password_hash, role, name, phone)
 VALUES 
-    ('user-admin-1', 'admin@rideflow.io', '$2b$10$wN1rB9wz3xM7G5x.1Y5hTu6x01c8gT3Z5e7c3.demo.hash', 'ADMIN', 'System Administrator', '+91 90000 00001'),
-    ('user-pass-1', 'passenger@rideflow.io', '$2b$10$wN1rB9wz3xM7G5x.1Y5hTu6x01c8gT3Z5e7c3.demo.hash', 'PASSENGER', 'Aarav Sharma', '+91 91234 56789'),
-    ('user-pass-2', 'neha@rideflow.io', '$2b$10$wN1rB9wz3xM7G5x.1Y5hTu6x01c8gT3Z5e7c3.demo.hash', 'PASSENGER', 'Neha Patel', '+91 91234 56790'),
-    ('user-drv-1', 'driver1@rideflow.io', '$2b$10$wN1rB9wz3xM7G5x.1Y5hTu6x01c8gT3Z5e7c3.demo.hash', 'DRIVER', 'Rajesh Kumar', '+91 98765 43210'),
-    ('user-drv-2', 'driver2@rideflow.io', '$2b$10$wN1rB9wz3xM7G5x.1Y5hTu6x01c8gT3Z5e7c3.demo.hash', 'DRIVER', 'Priya Sharma', '+91 98765 43211'),
-    ('user-drv-3', 'driver3@rideflow.io', '$2b$10$wN1rB9wz3xM7G5x.1Y5hTu6x01c8gT3Z5e7c3.demo.hash', 'DRIVER', 'Amit Verma', '+91 98765 43212'),
-    ('user-drv-4', 'driver4@rideflow.io', '$2b$10$wN1rB9wz3xM7G5x.1Y5hTu6x01c8gT3Z5e7c3.demo.hash', 'DRIVER', 'Suresh Nair', '+91 98765 43213'),
-    ('user-drv-5', 'driver5@rideflow.io', '$2b$10$wN1rB9wz3xM7G5x.1Y5hTu6x01c8gT3Z5e7c3.demo.hash', 'DRIVER', 'Deepak Joshi', '+91 98765 43214')
-ON CONFLICT (id) DO NOTHING;
+    ('user-admin-1', 'admin@rideflow.io', '$2b$10$ENA5lN.l4PfQHtJgFcksQOCiovkOg9B/ly0rLxcuc5wUMjxJzNMyq', 'ADMIN', 'System Administrator', '+91 90000 00001'),
+    ('user-pass-1', 'passenger@rideflow.io', '$2b$10$58YTAfkN18YVW/jiwHQcqu2N.H8dHTdxpIdkYQI8lytaxn1ZwsRnm', 'PASSENGER', 'Aarav Sharma', '+91 91234 56789'),
+    ('user-pass-2', 'neha@rideflow.io', '$2b$10$58YTAfkN18YVW/jiwHQcqu2N.H8dHTdxpIdkYQI8lytaxn1ZwsRnm', 'PASSENGER', 'Neha Patel', '+91 91234 56790'),
+    ('user-drv-1', 'driver@rideflow.io', '$2b$10$WPzWdSMqa2CO55rtPodcne6TXYJVUS7GoeCzIPUjJ1Lu1OLNIwksy', 'DRIVER', 'Rajesh Kumar', '+91 98765 43210'),
+    ('user-drv-2', 'driver2@rideflow.io', '$2b$10$WPzWdSMqa2CO55rtPodcne6TXYJVUS7GoeCzIPUjJ1Lu1OLNIwksy', 'DRIVER', 'Priya Sharma', '+91 98765 43211'),
+    ('user-drv-3', 'driver3@rideflow.io', '$2b$10$WPzWdSMqa2CO55rtPodcne6TXYJVUS7GoeCzIPUjJ1Lu1OLNIwksy', 'DRIVER', 'Amit Verma', '+91 98765 43212'),
+    ('user-drv-4', 'driver4@rideflow.io', '$2b$10$WPzWdSMqa2CO55rtPodcne6TXYJVUS7GoeCzIPUjJ1Lu1OLNIwksy', 'DRIVER', 'Suresh Nair', '+91 98765 43213'),
+    ('user-drv-5', 'driver5@rideflow.io', '$2b$10$WPzWdSMqa2CO55rtPodcne6TXYJVUS7GoeCzIPUjJ1Lu1OLNIwksy', 'DRIVER', 'Deepak Joshi', '+91 98765 43214')
+ON CONFLICT (id) DO UPDATE SET 
+    email = EXCLUDED.email,
+    password_hash = EXCLUDED.password_hash,
+    role = EXCLUDED.role,
+    name = EXCLUDED.name,
+    phone = EXCLUDED.phone;
 
 -- 2. Insert Passengers
 INSERT INTO passengers (id, user_id, rating, total_rides)

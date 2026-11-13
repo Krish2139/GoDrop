@@ -6,15 +6,19 @@ import {
   Users, 
   ShieldCheck, 
   Cpu, 
-  Activity, 
+  LogIn, 
+  LogOut, 
+  User, 
   Menu, 
   X 
 } from 'lucide-react';
+import { useAuth } from '../context/AuthContext';
 import './Navbar.css';
 
 const Navbar = () => {
   const location = useLocation();
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
+  const { user, isAuthenticated, logout } = useAuth();
 
   const navLinks = [
     { path: '/', label: 'Overview', icon: <Car size={18} /> },
@@ -54,12 +58,30 @@ const Navbar = () => {
           })}
         </nav>
 
-        {/* System Health Quick Status Badge */}
+        {/* User Authentication & Session Action */}
         <div className="navbar-actions">
-          <div className="system-status-pill">
-            <span className="status-dot-pulse"></span>
-            <span className="status-text">Gateway & Services Online</span>
-          </div>
+          {isAuthenticated ? (
+            <div className="nav-user-profile">
+              <span className={`user-role-badge badge-role-${user.role.toLowerCase()}`}>
+                {user.role}
+              </span>
+              <span className="user-name-text">{user.name}</span>
+              <button 
+                onClick={logout} 
+                className="btn-logout-icon" 
+                title="Sign Out"
+                aria-label="Sign Out"
+              >
+                <LogOut size={16} />
+              </button>
+            </div>
+          ) : (
+            <Link to="/auth" className="btn btn-primary btn-sm">
+              <LogIn size={15} />
+              <span>Sign In</span>
+            </Link>
+          )}
+
           <button 
             className="mobile-menu-toggle"
             onClick={() => setMobileMenuOpen(!mobileMenuOpen)}
@@ -85,6 +107,18 @@ const Navbar = () => {
                 <span>{link.label}</span>
               </Link>
             ))}
+            <div style={{ paddingTop: '0.75rem', borderTop: '1px solid var(--border-light)' }}>
+              {isAuthenticated ? (
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                  <span>Logged in: <b>{user.name}</b> ({user.role})</span>
+                  <button onClick={logout} className="btn btn-secondary btn-sm">Sign Out</button>
+                </div>
+              ) : (
+                <Link to="/auth" className="btn btn-primary" onClick={() => setMobileMenuOpen(false)}>
+                  <LogIn size={16} /> Sign In
+                </Link>
+              )}
+            </div>
           </div>
         </div>
       )}
@@ -93,4 +127,3 @@ const Navbar = () => {
 };
 
 export default Navbar;
-

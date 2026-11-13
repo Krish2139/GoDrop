@@ -1,20 +1,31 @@
 import express from 'express';
 import jwt from 'jsonwebtoken';
+import bcrypt from 'bcryptjs';
 import { z } from 'zod';
 import { logger } from '../logger.js';
+import { authenticateJwt } from '../middleware/auth.js';
+import { query, isDbConnected } from '../db.js';
 
 const router = express.Router();
 const JWT_SECRET = process.env.JWT_SECRET || 'super_secret_jwt_key_rideflow_academic_system_design_2026';
 const JWT_EXPIRES_IN = process.env.JWT_EXPIRES_IN || '24h';
 
-// Pre-seeded users (will be managed in PostgreSQL in Milestone 3 & 4)
+// Pre-hashed passwords using bcryptjs (salt rounds = 10)
+// Passwords:
+// admin@rideflow.io -> admin123
+// passenger@rideflow.io -> pass123
+// driver@rideflow.io -> driver123
+const ADMIN_HASH = bcrypt.hashSync('admin123', 10);
+const PASS_HASH = bcrypt.hashSync('pass123', 10);
+const DRV_HASH = bcrypt.hashSync('driver123', 10);
+
 export const usersStore = [
   {
     id: 'user-admin-1',
     email: 'admin@rideflow.io',
     name: 'System Administrator',
     role: 'ADMIN',
-    password_hash: 'admin123', // Demo plain for initial verification
+    password_hash: ADMIN_HASH,
     created_at: new Date().toISOString(),
   },
   {
@@ -22,7 +33,7 @@ export const usersStore = [
     email: 'passenger@rideflow.io',
     name: 'Aarav Sharma',
     role: 'PASSENGER',
-    password_hash: 'pass123',
+    password_hash: PASS_HASH,
     created_at: new Date().toISOString(),
   },
   {
@@ -30,31 +41,48 @@ export const usersStore = [
     email: 'driver@rideflow.io',
     name: 'Rajesh Kumar',
     role: 'DRIVER',
-    password_hash: 'driver123',
+    password_hash: DRV_HASH,
     created_at: new Date().toISOString(),
   },
 ];
 
-// Zod schemas
 const registerSchema = z.object({
-  email: z.string().email(),
+  email: z.string().email('Valid email address required'),
   password: z.string().min(6, 'Password must be at least 6 characters'),
-  name: z.string().min(2, 'Name is required'),
+  name: z.string().min(2, 'Name must be at least 2 characters'),
+  phone: z.string().optional().default('+91 90000 00000'),
   role: z.enum(['PASSENGER', 'DRIVER', 'ADMIN']).default('PASSENGER'),
 });
 
 const loginSchema = z.object({
-  email: z.string().email(),
-  password: z.string().min(1),
+  email: z.string().email('Valid email address required'),
+  password: z.string().min(1, 'Password is required'),
 });
 
 // POST /api/v1/auth/register
-router.post('/register', (req, res) => {
+router.post('/register', async (req, res) => {
   try {
     const validated = registerSchema.parse(req.body);
+    const normalizedEmail = validated.email.toLowerCase().trim();
 
-    const existing = usersStore.find(u => u.email === validated.email);
-    if (existing) {
+    // Check if user already exists
+    if (isDbConnected()) {
+      try {
+        const checkRes = await query('SELECT id FROM users WHERE email = $1', [normalizedEmail]);
+        if (checkRes.rows.length > 0) {
+          return res.status(409).json({
+            success: false,
+            error: 'ConflictError',
+            message: 'A user with this email address already exists.',
+          });
+        }
+      } catch (err) {
+        logger.error(err, 'PostgreSQL check user error');
+      }
+    }
+
+    const memoryExisting = usersStore.find(u => u.email.toLowerCase() === normalizedEmail);
+    if (memoryExisting) {
       return res.status(409).json({
         success: false,
         error: 'ConflictError',
@@ -62,14 +90,46 @@ router.post('/register', (req, res) => {
       });
     }
 
+    // Hash password with bcrypt
+    const password_hash = await bcrypt.hash(validated.password, 10);
+    const userId = `user-${Date.now()}-${Math.random().toString(36).substring(2, 6)}`;
+
     const newUser = {
-      id: `user-${Date.now()}`,
-      email: validated.email,
+      id: userId,
+      email: normalizedEmail,
       name: validated.name,
       role: validated.role,
-      password_hash: validated.password,
+      phone: validated.phone,
+      password_hash,
       created_at: new Date().toISOString(),
+      updated_at: new Date().toISOString(),
     };
+
+    if (isDbConnected()) {
+      try {
+        await query(
+          `INSERT INTO users (id, email, password_hash, role, name, phone)
+           VALUES ($1, $2, $3, $4, $5, $6)`,
+          [newUser.id, newUser.email, newUser.password_hash, newUser.role, newUser.name, newUser.phone]
+        );
+
+        if (newUser.role === 'PASSENGER') {
+          await query(
+            `INSERT INTO passengers (id, user_id, rating, total_rides)
+             VALUES ($1, $2, 5.00, 0)`,
+            [`pass-${Date.now()}`, newUser.id]
+          );
+        } else if (newUser.role === 'DRIVER') {
+          await query(
+            `INSERT INTO drivers (id, user_id, vehicle_model, license_plate, rating, status, current_latitude, current_longitude)
+             VALUES ($1, $2, 'Standard Sedan', $3, 5.00, 'AVAILABLE', 12.9716, 77.5946)`,
+            [`driver-${Date.now()}`, newUser.id, `KA-${Math.floor(10 + Math.random() * 90)}-XX-${Math.floor(1000 + Math.random() * 9000)}`]
+          );
+        }
+      } catch (err) {
+        logger.error(err, 'PostgreSQL insert user error');
+      }
+    }
 
     usersStore.push(newUser);
 
@@ -79,11 +139,11 @@ router.post('/register', (req, res) => {
       { expiresIn: JWT_EXPIRES_IN }
     );
 
-    logger.info({ userId: newUser.id, role: newUser.role }, 'User registered');
+    logger.info({ userId: newUser.id, email: newUser.email, role: newUser.role }, 'User registered with bcrypt hash');
 
     res.status(201).json({
       success: true,
-      message: 'User registered successfully',
+      message: 'Account registered successfully.',
       token,
       user: {
         id: newUser.id,
@@ -102,12 +162,29 @@ router.post('/register', (req, res) => {
 });
 
 // POST /api/v1/auth/login
-router.post('/login', (req, res) => {
+router.post('/login', async (req, res) => {
   try {
     const { email, password } = loginSchema.parse(req.body);
+    const normalizedEmail = email.toLowerCase().trim();
 
-    const user = usersStore.find(u => u.email.toLowerCase() === email.toLowerCase());
-    if (!user || user.password_hash !== password) {
+    let user;
+
+    if (isDbConnected()) {
+      try {
+        const result = await query('SELECT * FROM users WHERE email = $1', [normalizedEmail]);
+        if (result.rows.length > 0) {
+          user = result.rows[0];
+        }
+      } catch (err) {
+        logger.error(err, 'PostgreSQL user lookup error');
+      }
+    }
+
+    if (!user) {
+      user = usersStore.find(u => u.email.toLowerCase() === normalizedEmail);
+    }
+
+    if (!user) {
       return res.status(401).json({
         success: false,
         error: 'Unauthorized',
@@ -115,17 +192,29 @@ router.post('/login', (req, res) => {
       });
     }
 
+    // Verify password with bcryptjs
+    const isMatch = await bcrypt.compare(password, user.password_hash);
+    if (!isMatch) {
+      logger.warn({ email: normalizedEmail }, 'Failed login: incorrect password');
+      return res.status(401).json({
+        success: false,
+        error: 'Unauthorized',
+        message: 'Invalid email or password credentials.',
+      });
+    }
+
+    // Issue signed JWT token
     const token = jwt.sign(
       { id: user.id, email: user.email, role: user.role, name: user.name },
       JWT_SECRET,
       { expiresIn: JWT_EXPIRES_IN }
     );
 
-    logger.info({ userId: user.id, email: user.email }, 'User logged in');
+    logger.info({ userId: user.id, email: user.email, role: user.role }, 'Successful user login');
 
     res.json({
       success: true,
-      message: 'Login successful',
+      message: 'Authentication successful.',
       token,
       user: {
         id: user.id,
@@ -143,32 +232,13 @@ router.post('/login', (req, res) => {
   }
 });
 
-// GET /api/v1/auth/me
-router.get('/me', (req, res) => {
-  const authHeader = req.headers.authorization;
-  if (!authHeader || !authHeader.startsWith('Bearer ')) {
-    return res.status(401).json({
-      success: false,
-      error: 'Unauthorized',
-      message: 'Authorization Bearer token required.',
-    });
-  }
-
-  const token = authHeader.split(' ')[1];
-  try {
-    const decoded = jwt.verify(token, JWT_SECRET);
-    res.json({
-      success: true,
-      user: decoded,
-    });
-  } catch (err) {
-    res.status(401).json({
-      success: false,
-      error: 'InvalidToken',
-      message: 'Token expired or invalid.',
-    });
-  }
+// GET /api/v1/auth/me - Protected by authenticateJwt
+router.get('/me', authenticateJwt, (req, res) => {
+  res.json({
+    success: true,
+    message: 'User authentication verified.',
+    user: req.user,
+  });
 });
 
 export default router;
-

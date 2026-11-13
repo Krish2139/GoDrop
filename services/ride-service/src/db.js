@@ -42,3 +42,4 @@ export async function query(text, params) {
   logger.debug({ text, duration, rows: res.rowCount }, 'Executed PostgreSQL query');
   return res;
 }
+

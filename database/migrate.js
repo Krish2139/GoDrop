@@ -113,3 +113,4 @@ if (command === 'up') {
 } else if (command === 'seed') {
   runSeeds().catch(() => process.exit(1));
 }
+
