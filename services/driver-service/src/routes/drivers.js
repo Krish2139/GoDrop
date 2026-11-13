@@ -260,6 +260,31 @@ router.post('/', async (req, res) => {
   }
 });
 
+// GET /api/v1/drivers/profile - Current driver profile
+router.get('/profile', async (req, res) => {
+  const userId = req.query.user_id;
+
+  if (isDbConnected()) {
+    try {
+      let result;
+      if (userId) {
+        result = await query('SELECT * FROM drivers WHERE user_id = $1 LIMIT 1', [userId]);
+      } else {
+        result = await query('SELECT * FROM drivers ORDER BY created_at ASC LIMIT 1');
+      }
+
+      if (result.rows.length > 0) {
+        return res.json({ success: true, source: 'PostgreSQL', data: result.rows[0] });
+      }
+    } catch (err) {
+      logger.error(err, 'PostgreSQL error fetching driver profile');
+    }
+  }
+
+  const driver = userId ? driversStore.find(d => d.user_id === userId) || driversStore[0] : driversStore[0];
+  res.json({ success: true, source: 'InMemoryStore', data: driver });
+});
+
 // GET /api/v1/drivers/:id
 router.get('/:id', async (req, res) => {
   if (isDbConnected()) {
@@ -379,6 +404,31 @@ router.patch('/:id/location', async (req, res) => {
     }
     res.status(500).json({ success: false, error: 'InternalServerError' });
   }
+});
+
+// GET /api/v1/drivers/profile - Current driver profile
+router.get('/profile', async (req, res) => {
+  const userId = req.query.user_id;
+
+  if (isDbConnected()) {
+    try {
+      let result;
+      if (userId) {
+        result = await query('SELECT * FROM drivers WHERE user_id = $1 LIMIT 1', [userId]);
+      } else {
+        result = await query('SELECT * FROM drivers ORDER BY created_at ASC LIMIT 1');
+      }
+
+      if (result.rows.length > 0) {
+        return res.json({ success: true, source: 'PostgreSQL', data: result.rows[0] });
+      }
+    } catch (err) {
+      logger.error(err, 'PostgreSQL error fetching driver profile');
+    }
+  }
+
+  const driver = userId ? driversStore.find(d => d.user_id === userId) || driversStore[0] : driversStore[0];
+  res.json({ success: true, source: 'InMemoryStore', data: driver });
 });
 
 // GET /api/v1/drivers/:id/offers

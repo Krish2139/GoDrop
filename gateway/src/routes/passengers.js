@@ -1,11 +1,11 @@
 import express from 'express';
 import axios from 'axios';
 import { logger } from '../logger.js';
+import { query, isDbConnected } from '../db.js';
 
 const router = express.Router();
 const RIDE_SERVICE_URL = process.env.RIDE_SERVICE_URL || 'http://localhost:5001';
 
-// Seed passengers
 export const passengersStore = [
   {
     id: 'pass-seed-1',
@@ -19,10 +19,41 @@ export const passengersStore = [
 ];
 
 // GET /api/v1/passengers/profile
-router.get('/profile', (req, res) => {
+router.get('/profile', async (req, res) => {
+  const userId = req.user?.id || req.query.user_id;
+
+  if (isDbConnected()) {
+    try {
+      let result;
+      if (userId) {
+        result = await query(
+          `SELECT p.*, u.name, u.email, u.phone 
+           FROM passengers p 
+           JOIN users u ON p.user_id = u.id 
+           WHERE p.user_id = $1 LIMIT 1`,
+          [userId]
+        );
+      } else {
+        result = await query(
+          `SELECT p.*, u.name, u.email, u.phone 
+           FROM passengers p 
+           JOIN users u ON p.user_id = u.id 
+           LIMIT 1`
+        );
+      }
+
+      if (result.rows.length > 0) {
+        return res.json({ success: true, source: 'PostgreSQL', data: result.rows[0] });
+      }
+    } catch (err) {
+      logger.error(err, 'PostgreSQL error fetching passenger profile');
+    }
+  }
+
   const passenger = passengersStore[0];
   res.json({
     success: true,
+    source: 'InMemoryStore',
     data: passenger,
   });
 });
@@ -48,4 +79,3 @@ router.get('/rides', async (req, res) => {
 });
 
 export default router;
-

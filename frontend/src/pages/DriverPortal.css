@@ -1,0 +1,317 @@
+.driver-portal-page {
+  padding: 2.5rem 1.5rem;
+  display: flex;
+  flex-direction: column;
+  gap: 2rem;
+}
+
+.driver-top-grid {
+  grid-template-columns: 1.2fr 1.8fr;
+  gap: 1.5rem;
+}
+
+@media (max-width: 900px) {
+  .driver-top-grid {
+    grid-template-columns: 1fr;
+  }
+}
+
+.driver-middle-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 1.5rem;
+}
+
+@media (max-width: 900px) {
+  .driver-middle-grid {
+    grid-template-columns: 1fr;
+  }
+}
+
+/* Driver Profile Card */
+.driver-card-head {
+  display: flex;
+  align-items: center;
+  gap: 1rem;
+  margin-bottom: 1.5rem;
+}
+
+.driver-avatar-circle {
+  width: 48px;
+  height: 48px;
+  border-radius: 50%;
+  background-color: var(--success-bg);
+  color: #059669;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.driver-name {
+  font-size: 1.2rem;
+  font-weight: 800;
+  color: var(--slate-900);
+}
+
+.driver-vehicle {
+  font-size: 0.85rem;
+  color: var(--slate-500);
+}
+
+.driver-details-list {
+  display: flex;
+  flex-direction: column;
+  gap: 0.6rem;
+  background: var(--slate-50);
+  border: 1px solid var(--slate-200);
+  padding: 0.85rem;
+  border-radius: var(--radius-md);
+  font-size: 0.875rem;
+}
+
+.detail-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}
+
+.detail-label {
+  color: var(--slate-500);
+  font-weight: 500;
+}
+
+.detail-val.rating {
+  display: flex;
+  align-items: center;
+  gap: 0.25rem;
+  color: #D97706;
+  font-weight: 700;
+}
+
+/* Toggle Card */
+.toggle-card {
+  display: flex;
+  flex-direction: column;
+  justify-content: space-between;
+}
+
+.toggle-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 0.75rem;
+}
+
+.status-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.4rem;
+  font-size: 0.75rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  padding: 0.25rem 0.65rem;
+  border-radius: var(--radius-full);
+}
+
+.status-pill.online {
+  background-color: var(--success-bg);
+  color: #059669;
+  border: 1px solid var(--success-border);
+}
+
+.status-pill.online .dot {
+  width: 6px;
+  height: 6px;
+  background-color: #10B981;
+  border-radius: 50%;
+}
+
+.status-pill.offline {
+  background-color: var(--slate-100);
+  color: var(--slate-500);
+  border: 1px solid var(--slate-300);
+}
+
+.status-pill.offline .dot {
+  width: 6px;
+  height: 6px;
+  background-color: var(--slate-400);
+  border-radius: 50%;
+}
+
+.toggle-desc {
+  font-size: 0.9rem;
+  color: var(--slate-600);
+  line-height: 1.6;
+  margin-bottom: 1.25rem;
+}
+
+.toggle-btn {
+  width: 100%;
+  padding: 0.85rem;
+  font-size: 1rem;
+  font-weight: 700;
+}
+
+.btn-online {
+  background: linear-gradient(135deg, #059669, #047857);
+  color: #ffffff;
+}
+
+.btn-online:hover {
+  background: linear-gradient(135deg, #047857, #065F46);
+}
+
+.btn-offline {
+  background-color: var(--slate-800);
+  color: #ffffff;
+}
+
+.btn-offline:hover {
+  background-color: var(--slate-900);
+}
+
+/* Active Trip Card */
+.card-head-simple {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  border-bottom: 1px solid var(--border-light);
+  padding-bottom: 1rem;
+  margin-bottom: 1.25rem;
+}
+
+.card-title {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  font-size: 1.2rem;
+  font-weight: 700;
+  color: var(--slate-900);
+}
+
+.trip-passenger-info {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  font-size: 0.95rem;
+  margin-bottom: 1rem;
+  background: var(--slate-50);
+  padding: 0.75rem 1rem;
+  border-radius: var(--radius-md);
+  border: 1px solid var(--slate-200);
+}
+
+.fare-tag {
+  color: var(--primary-700);
+  font-size: 1.15rem;
+}
+
+.trip-locations-box {
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+  margin-bottom: 1.5rem;
+}
+
+.location-row {
+  display: flex;
+  align-items: flex-start;
+  gap: 0.5rem;
+}
+
+.loc-label {
+  font-size: 0.75rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  color: var(--slate-500);
+}
+
+.loc-addr {
+  font-size: 0.9rem;
+  font-weight: 600;
+  color: var(--slate-800);
+}
+
+.action-step-group {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 0.75rem;
+}
+
+.btn-success-action {
+  background: linear-gradient(135deg, #059669, #047857);
+}
+
+.btn-success-action:hover {
+  background: linear-gradient(135deg, #047857, #065F46);
+}
+
+.no-active-trip {
+  text-align: center;
+  padding: 2.5rem 1rem;
+  color: var(--slate-500);
+}
+
+.no-trip-icon {
+  margin: 0 auto 0.75rem auto;
+  color: var(--slate-400);
+}
+
+/* GPS Controller */
+.gps-desc {
+  font-size: 0.85rem;
+  color: var(--slate-500);
+  margin-bottom: 1rem;
+}
+
+.waypoint-buttons-group {
+  margin-bottom: 1.25rem;
+}
+
+.quick-label {
+  display: block;
+  font-size: 0.75rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  color: var(--slate-600);
+  margin-bottom: 0.5rem;
+}
+
+.waypoint-grid {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.4rem;
+}
+
+.waypoint-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+  font-size: 0.75rem;
+  font-weight: 600;
+  padding: 0.35rem 0.65rem;
+  background: var(--slate-100);
+  border: 1px solid var(--slate-300);
+  border-radius: var(--radius-full);
+  cursor: pointer;
+  color: var(--slate-700);
+  transition: all var(--transition-fast);
+}
+
+.waypoint-pill:hover:not(:disabled) {
+  background: var(--primary-50);
+  border-color: var(--primary-300);
+  color: var(--primary-700);
+}
+
+.coords-inputs-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr 0.8fr;
+  gap: 0.75rem;
+  margin-bottom: 1rem;
+}
+
+.btn-broadcast {
+  width: 100%;
+}
