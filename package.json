@@ -1,6 +1,7 @@
 {
   "name": "rideflow-distributed-system",
   "version": "1.0.0",
+  "type": "module",
   "description": "Distributed Ride Booking and Driver Dispatch System",
   "private": true,
   "scripts": {

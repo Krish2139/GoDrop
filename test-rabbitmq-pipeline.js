@@ -129,10 +129,12 @@ async function testRabbitMQPipeline() {
     // Wait for worker to consume and nack to DLQ
     await new Promise(r => setTimeout(r, 1500));
 
-    const dlqStatus = await rabbitChannel.checkQueue('dispatch.dlq');
+    const dlqStatus = await fetch(`${RABBIT_API_URL}/queues/%2F/dispatch.dlq`, {
+      headers: { Authorization: AUTH_HEADER }
+    }).then(r => r.json());
 
-    console.log(`✅ Dead-Letter Queue (dispatch.dlq) Messages Count: ${dlqStatus.messageCount || 0}`);
-    if ((dlqStatus.messageCount || 0) > 0) {
+    console.log(`✅ Dead-Letter Queue (dispatch.dlq) Messages Count: ${dlqStatus.messages || 0}`);
+    if ((dlqStatus.messages || 0) > 0) {
       console.log('🎉 SUCCESS: Dead-Letter Queue verified! Corrupted message safely quarantined in dispatch.dlq.');
     }
 
@@ -163,3 +165,4 @@ async function testRabbitMQPipeline() {
 }
 
 testRabbitMQPipeline();
+

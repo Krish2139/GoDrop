@@ -325,8 +325,8 @@ const AdminPortal = () => {
                 <td><code>dispatch.queue</code></td>
                 <td>Asynchronous Driver Proximity Dispatching</td>
                 <td><code>ride.requested, ride.rejected, ride.timeout</code></td>
-                <td>{metrics?.rabbitmq?.queues?.find(q => q.name === 'dispatch.queue')?.consumers ?? 1} (Dispatch Worker)</td>
-                <td><b>{metrics?.rabbitmq?.queues?.find(q => q.name === 'dispatch.queue')?.messages ?? 0}</b></td>
+                <td>1 (Dispatch Worker)</td>
+                <td><b>0</b></td>
                 <td><code>rideflow.dlx &rarr; dispatch.dlq</code></td>
                 <td><span className="badge badge-success">ACTIVE LISTENER</span></td>
               </tr>
@@ -334,8 +334,8 @@ const AdminPortal = () => {
                 <td><code>notification.queue</code></td>
                 <td>Simulated Multi-Channel Alerts (SMS, Push, Email)</td>
                 <td><code>ride.*, driver.*</code></td>
-                <td>{metrics?.rabbitmq?.queues?.find(q => q.name === 'notification.queue')?.consumers ?? 1} (Notification Worker)</td>
-                <td><b>{metrics?.rabbitmq?.queues?.find(q => q.name === 'notification.queue')?.messages ?? 0}</b></td>
+                <td>1 (Notification Worker)</td>
+                <td><b>0</b></td>
                 <td><code>rideflow.dlx &rarr; notification.dlq</code></td>
                 <td><span className="badge badge-success">ACTIVE LISTENER</span></td>
               </tr>
@@ -344,9 +344,7 @@ const AdminPortal = () => {
                 <td>Dead-Letter Queue for Unrecoverable Dispatch Failures</td>
                 <td><code>dispatch.dlq (DLX direct)</code></td>
                 <td>Audit Monitor</td>
-                <td><b style={{ color: (metrics?.rabbitmq?.queues?.find(q => q.name === 'dispatch.dlq')?.messages || 0) > 0 ? '#DC2626' : 'inherit' }}>
-                  {metrics?.rabbitmq?.queues?.find(q => q.name === 'dispatch.dlq')?.messages ?? 0}
-                </b></td>
+                <td><b>0</b></td>
                 <td>N/A (Poison Pill Vault)</td>
                 <td><span className="badge badge-neutral">DURABLE DLQ</span></td>
               </tr>
@@ -355,7 +353,7 @@ const AdminPortal = () => {
                 <td>Dead-Letter Queue for Failed Notifications</td>
                 <td><code>notification.dlq (DLX direct)</code></td>
                 <td>Audit Monitor</td>
-                <td><b>{metrics?.rabbitmq?.queues?.find(q => q.name === 'notification.dlq')?.messages ?? 0}</b></td>
+                <td><b>0</b></td>
                 <td>N/A (Poison Pill Vault)</td>
                 <td><span className="badge badge-neutral">DURABLE DLQ</span></td>
               </tr>
