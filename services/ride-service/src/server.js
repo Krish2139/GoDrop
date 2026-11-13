@@ -4,6 +4,8 @@ import dotenv from 'dotenv';
 import ridesRouter from './routes/rides.js';
 import { logger } from './logger.js';
 import { isRedisConnected, rideCacheMetrics, getRedisClient } from './redis.js';
+import { initRabbitMQ, isRabbitConnected, rabbitMetrics } from './rabbitmq.js';
+import { startOutboxPublisher, stopOutboxPublisher, outboxMetrics } from './outboxPublisher.js';
 
 dotenv.config();
 
@@ -45,6 +47,12 @@ app.get('/health', (req, res) => {
         invalidations: rideCacheMetrics.invalidations,
       },
     },
+    rabbitmq: {
+      connected: isRabbitConnected(),
+      broker: 'RabbitMQ 3.13 (AMQP :5672)',
+      publishedCount: rabbitMetrics.publishedCount,
+      outboxRelayed: outboxMetrics.totalProcessed,
+    },
   });
 });
 
@@ -75,6 +83,17 @@ app.get('/api/v1/metrics', async (req, res) => {
         invalidations: rideCacheMetrics.invalidations,
       },
     },
+    rabbitmq: {
+      connected: isRabbitConnected(),
+      publishedCount: rabbitMetrics.publishedCount,
+      publishErrors: rabbitMetrics.publishErrors,
+      outboxPublisher: {
+        totalProcessed: outboxMetrics.totalProcessed,
+        pendingCount: outboxMetrics.pendingCount,
+        failedCount: outboxMetrics.failedCount,
+        lastPollAt: outboxMetrics.lastPollAt,
+      },
+    },
   });
 });
 
@@ -100,13 +119,17 @@ app.use((err, req, res, next) => {
   });
 });
 
-const server = app.listen(PORT, () => {
+const server = app.listen(PORT, async () => {
   logger.info(`🚗 Ride Service running on http://localhost:${PORT}`);
+  // Initialize RabbitMQ connection & Start Transactional Outbox Publisher
+  await initRabbitMQ();
+  startOutboxPublisher(1500);
 });
 
 // Graceful shutdown
 process.on('SIGTERM', () => {
   logger.info('SIGTERM received. Closing Ride Service gracefully...');
+  stopOutboxPublisher();
   server.close(() => {
     logger.info('Ride Service closed.');
     process.exit(0);

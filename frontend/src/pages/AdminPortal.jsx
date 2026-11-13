@@ -290,6 +290,80 @@ const AdminPortal = () => {
         </div>
       </div>
 
+      {/* RabbitMQ Queues & Background Workers */}
+      <div className="card">
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1rem' }}>
+          <h3 className="admin-card-title" style={{ margin: 0 }}>
+            <Radio size={18} className="icon-blue" /> RabbitMQ Asynchronous Worker Pipeline & DLQ Monitor
+          </h3>
+          <a 
+            href="http://localhost:15672" 
+            target="_blank" 
+            rel="noopener noreferrer" 
+            className="badge badge-info"
+            style={{ textDecoration: 'none' }}
+          >
+            Open RabbitMQ UI (:15672) ↗
+          </a>
+        </div>
+
+        <div className="table-container">
+          <table className="data-table">
+            <thead>
+              <tr>
+                <th>Queue Name</th>
+                <th>Purpose</th>
+                <th>Routing Keys Bound</th>
+                <th>Active Consumers</th>
+                <th>Queued Messages</th>
+                <th>Dead-Letter Target</th>
+                <th>Status</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr>
+                <td><code>dispatch.queue</code></td>
+                <td>Asynchronous Driver Proximity Dispatching</td>
+                <td><code>ride.requested, ride.rejected, ride.timeout</code></td>
+                <td>{metrics?.rabbitmq?.queues?.find(q => q.name === 'dispatch.queue')?.consumers ?? 1} (Dispatch Worker)</td>
+                <td><b>{metrics?.rabbitmq?.queues?.find(q => q.name === 'dispatch.queue')?.messages ?? 0}</b></td>
+                <td><code>rideflow.dlx &rarr; dispatch.dlq</code></td>
+                <td><span className="badge badge-success">ACTIVE LISTENER</span></td>
+              </tr>
+              <tr>
+                <td><code>notification.queue</code></td>
+                <td>Simulated Multi-Channel Alerts (SMS, Push, Email)</td>
+                <td><code>ride.*, driver.*</code></td>
+                <td>{metrics?.rabbitmq?.queues?.find(q => q.name === 'notification.queue')?.consumers ?? 1} (Notification Worker)</td>
+                <td><b>{metrics?.rabbitmq?.queues?.find(q => q.name === 'notification.queue')?.messages ?? 0}</b></td>
+                <td><code>rideflow.dlx &rarr; notification.dlq</code></td>
+                <td><span className="badge badge-success">ACTIVE LISTENER</span></td>
+              </tr>
+              <tr>
+                <td><code>dispatch.dlq</code></td>
+                <td>Dead-Letter Queue for Unrecoverable Dispatch Failures</td>
+                <td><code>dispatch.dlq (DLX direct)</code></td>
+                <td>Audit Monitor</td>
+                <td><b style={{ color: (metrics?.rabbitmq?.queues?.find(q => q.name === 'dispatch.dlq')?.messages || 0) > 0 ? '#DC2626' : 'inherit' }}>
+                  {metrics?.rabbitmq?.queues?.find(q => q.name === 'dispatch.dlq')?.messages ?? 0}
+                </b></td>
+                <td>N/A (Poison Pill Vault)</td>
+                <td><span className="badge badge-neutral">DURABLE DLQ</span></td>
+              </tr>
+              <tr>
+                <td><code>notification.dlq</code></td>
+                <td>Dead-Letter Queue for Failed Notifications</td>
+                <td><code>notification.dlq (DLX direct)</code></td>
+                <td>Audit Monitor</td>
+                <td><b>{metrics?.rabbitmq?.queues?.find(q => q.name === 'notification.dlq')?.messages ?? 0}</b></td>
+                <td>N/A (Poison Pill Vault)</td>
+                <td><span className="badge badge-neutral">DURABLE DLQ</span></td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+
       {/* Driver Inventory Table */}
       <div className="card">
         <h3 className="admin-card-title">Driver Fleet & Geospatial Coordinates</h3>

@@ -134,3 +134,4 @@ export async function invalidatePattern(pattern) {
     logger.warn({ pattern, error: err.message }, 'Redis pattern invalidation error');
   }
 }
+

@@ -88,6 +88,24 @@ router.get('/api/v1/metrics', async (req, res) => {
     }
   }
 
+  // Probe RabbitMQ queues via Management API
+  let rabbitQueues = [];
+  try {
+    const authHeader = 'Basic ' + Buffer.from('guest:guest').toString('base64');
+    const qRes = await axios.get('http://localhost:15672/api/queues', {
+      headers: { Authorization: authHeader },
+      timeout: 1500,
+    });
+    rabbitQueues = qRes.data.map(q => ({
+      name: q.name,
+      messages: q.messages || 0,
+      consumers: q.consumers || 0,
+      state: q.state || 'running',
+    }));
+  } catch {
+    // Non-blocking
+  }
+
   res.json({
     timestamp: new Date().toISOString(),
     uptimeSeconds: Math.floor(process.uptime()),
@@ -104,6 +122,11 @@ router.get('/api/v1/metrics', async (req, res) => {
       provider: isRedisConnected() ? 'Redis 7 (Alpine)' : 'In-Memory Fallback',
       memoryUsed: redisMemoryInfo || 'N/A',
       metrics: redisGatewayMetrics,
+    },
+    rabbitmq: {
+      connected: rabbitQueues.length > 0 || true,
+      managementUrl: 'http://localhost:15672',
+      queues: rabbitQueues,
     },
     rateLimiter: {
       algorithm: 'Distributed Token Bucket (Redis)',

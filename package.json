@@ -28,6 +28,7 @@
   "author": "RideFlow Academic Team",
   "license": "ISC",
   "dependencies": {
+    "amqplib": "^2.3.1",
     "ioredis": "^6.0.0"
   }
 }
