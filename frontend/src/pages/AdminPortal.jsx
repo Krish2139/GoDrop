@@ -64,6 +64,32 @@ const AdminPortal = () => {
     loadAdminTelemetry();
   }, []);
 
+  const [chaosLoading, setChaosLoading] = useState(false);
+
+  const handleInjectChaos = async (target, mode) => {
+    try {
+      setChaosLoading(true);
+      await apiClient.post('/chaos/inject', { target, mode });
+      await loadAdminTelemetry();
+    } catch (e) {
+      console.error(e);
+    } finally {
+      setChaosLoading(false);
+    }
+  };
+
+  const handleResetChaos = async () => {
+    try {
+      setChaosLoading(true);
+      await apiClient.post('/chaos/reset');
+      await loadAdminTelemetry();
+    } catch (e) {
+      console.error(e);
+    } finally {
+      setChaosLoading(false);
+    }
+  };
+
   const availableDrivers = drivers.filter(d => d.status === 'AVAILABLE').length;
   const offlineDrivers = drivers.filter(d => d.status === 'OFFLINE').length;
   const activeRides = rides.filter(r => !['COMPLETED', 'CANCELLED'].includes(r.status)).length;
@@ -272,19 +298,52 @@ const AdminPortal = () => {
             <div className="telemetry-divider"></div>
             <div className="telemetry-row">
               <span>Ride Service Circuit Breaker:</span>
-              <span className="badge badge-success">
+              <span className={`badge ${metrics?.circuitBreakers?.rideService?.state === 'OPEN' ? 'badge-danger' : metrics?.circuitBreakers?.rideService?.state === 'HALF-OPEN' ? 'badge-warning' : 'badge-success'}`}>
                 {metrics?.circuitBreakers?.rideService?.state || 'CLOSED'}
               </span>
             </div>
             <div className="telemetry-row">
               <span>Driver Service Circuit Breaker:</span>
-              <span className="badge badge-success">
+              <span className={`badge ${metrics?.circuitBreakers?.driverService?.state === 'OPEN' ? 'badge-danger' : metrics?.circuitBreakers?.driverService?.state === 'HALF-OPEN' ? 'badge-warning' : 'badge-success'}`}>
                 {metrics?.circuitBreakers?.driverService?.state || 'CLOSED'}
               </span>
             </div>
             <div className="telemetry-row">
               <span>Failover Resilience:</span>
-              <span className="badge badge-success">ZERO DISRUPTION FALLBACK</span>
+              <span className="badge badge-success">REDIS GRACEFUL FALLBACK</span>
+            </div>
+
+            {/* Interactive Chaos Testing Trigger Bar */}
+            <div style={{ marginTop: '0.85rem', paddingTop: '0.75rem', borderTop: '1px solid var(--slate-200)' }}>
+              <div style={{ fontSize: '0.72rem', color: 'var(--slate-500)', textTransform: 'uppercase', fontWeight: 700, marginBottom: '0.4rem' }}>
+                Chaos Engineering Controls
+              </div>
+              <div style={{ display: 'flex', gap: '0.4rem', flexWrap: 'wrap' }}>
+                <button 
+                  onClick={() => handleInjectChaos('driverService', 'trip')}
+                  disabled={chaosLoading}
+                  className="btn btn-outline"
+                  style={{ fontSize: '0.75rem', padding: '0.3rem 0.6rem', color: '#DC2626', borderColor: '#FCA5A5' }}
+                >
+                  ⚡ Trip Breaker (OPEN)
+                </button>
+                <button 
+                  onClick={() => handleInjectChaos('driverService', 'error')}
+                  disabled={chaosLoading}
+                  className="btn btn-outline"
+                  style={{ fontSize: '0.75rem', padding: '0.3rem 0.6rem', color: '#D97706', borderColor: '#FDE68A' }}
+                >
+                  💥 Inject 500 Chaos
+                </button>
+                <button 
+                  onClick={handleResetChaos}
+                  disabled={chaosLoading}
+                  className="btn btn-outline"
+                  style={{ fontSize: '0.75rem', padding: '0.3rem 0.6rem', color: '#059669', borderColor: '#A7F3D0' }}
+                >
+                  ✅ Heal & Close
+                </button>
+              </div>
             </div>
           </div>
         </div>

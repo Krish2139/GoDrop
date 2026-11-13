@@ -1,7 +1,13 @@
 import express from 'express';
 import axios from 'axios';
 import { rateLimitMetrics } from '../middleware/rateLimiter.js';
-import { rideServiceBreaker, driverServiceBreaker } from '../middleware/circuitBreaker.js';
+import { 
+  rideServiceBreaker, 
+  driverServiceBreaker, 
+  chaosState, 
+  injectChaos, 
+  resetChaos 
+} from '../middleware/circuitBreaker.js';
 import { isRedisConnected, redisGatewayMetrics, getRedisClient } from '../redis.js';
 import { getSocketMetrics } from '../socket.js';
 
@@ -137,6 +143,50 @@ router.get('/api/v1/metrics', async (req, res) => {
       exceededCount429: rateLimitMetrics.rateLimitExceededCount,
       activeTrackedClients: rateLimitMetrics.activeTrackedClients,
     },
+    chaos: chaosState,
+    circuitBreakers: {
+      rideService: {
+        state: rideServiceBreaker.opened ? 'OPEN' : rideServiceBreaker.halfOpen ? 'HALF-OPEN' : 'CLOSED',
+        stats: rideServiceBreaker.stats,
+      },
+      driverService: {
+        state: driverServiceBreaker.opened ? 'OPEN' : driverServiceBreaker.halfOpen ? 'HALF-OPEN' : 'CLOSED',
+        stats: driverServiceBreaker.stats,
+      },
+    },
+  });
+});
+
+// -------------------------------------------------------------
+// Chaos Engineering & Resilience Fault Injection Endpoints
+// -------------------------------------------------------------
+
+// POST /api/v1/chaos/inject - Inject simulated fault into downstream microservice
+router.post('/api/v1/chaos/inject', (req, res) => {
+  const { target = 'driverService', mode = 'error', delayMs = 3500 } = req.body || {};
+  const state = injectChaos({ target, mode, delayMs });
+  res.json({
+    success: true,
+    message: `Chaos fault [${mode}] injected into ${target}.`,
+    chaosState: state,
+  });
+});
+
+// POST /api/v1/chaos/reset - Heal all faults and force circuit breakers closed
+router.post('/api/v1/chaos/reset', (req, res) => {
+  const state = resetChaos();
+  res.json({
+    success: true,
+    message: 'All chaos faults reset. Downstream circuits closed and healed.',
+    chaosState: state,
+  });
+});
+
+// GET /api/v1/chaos/status - Query active chaos mode and circuit breaker states
+router.get('/api/v1/chaos/status', (req, res) => {
+  res.json({
+    success: true,
+    chaosState,
     circuitBreakers: {
       rideService: {
         state: rideServiceBreaker.opened ? 'OPEN' : rideServiceBreaker.halfOpen ? 'HALF-OPEN' : 'CLOSED',
