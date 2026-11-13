@@ -12,3 +12,4 @@ EXPOSE 5001
 USER node
 
 CMD ["node", "src/server.js"]
+

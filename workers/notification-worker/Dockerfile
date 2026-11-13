@@ -10,3 +10,4 @@ COPY . .
 USER node
 
 CMD ["node", "src/worker.js"]
+

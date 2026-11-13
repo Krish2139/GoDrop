@@ -14,6 +14,10 @@ export const pool = new Pool({
   idleTimeoutMillis: 30000,
 });
 
+pool.on('error', (err) => {
+  logger.warn({ error: err.message }, 'Unexpected idle client error on PostgreSQL pool in Driver Service');
+});
+
 let isConnected = false;
 
 pool.connect()
