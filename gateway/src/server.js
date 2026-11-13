@@ -1,3 +1,4 @@
+import http from 'http';
 import express from 'express';
 import cors from 'cors';
 import helmet from 'helmet';
@@ -14,6 +15,7 @@ import {
 import authRouter from './routes/auth.js';
 import passengersRouter from './routes/passengers.js';
 import systemRouter, { gatewayMetrics } from './routes/system.js';
+import { initSocketServer } from './socket.js';
 
 dotenv.config();
 
@@ -127,9 +129,15 @@ app.use((err, req, res, next) => {
   });
 });
 
-const server = app.listen(PORT, () => {
+const server = http.createServer(app);
+
+// Initialize Socket.IO Real-time Channels
+initSocketServer(server);
+
+server.listen(PORT, () => {
   logger.info(`🛡️ RideFlow API Gateway running on http://localhost:${PORT}`);
   logger.info(`🔒 Security: JWT & Role-Based Access Control (RBAC) Active`);
+  logger.info(`⚡ Real-time: Socket.IO Engine listening on port ${PORT}`);
 });
 
 // Graceful shutdown handling

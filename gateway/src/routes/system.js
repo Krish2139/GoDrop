@@ -3,6 +3,7 @@ import axios from 'axios';
 import { rateLimitMetrics } from '../middleware/rateLimiter.js';
 import { rideServiceBreaker, driverServiceBreaker } from '../middleware/circuitBreaker.js';
 import { isRedisConnected, redisGatewayMetrics, getRedisClient } from '../redis.js';
+import { getSocketMetrics } from '../socket.js';
 
 const router = express.Router();
 const RIDE_SERVICE_URL = process.env.RIDE_SERVICE_URL || 'http://localhost:5001';
@@ -128,6 +129,7 @@ router.get('/api/v1/metrics', async (req, res) => {
       managementUrl: 'http://localhost:15672',
       queues: rabbitQueues,
     },
+    socketio: getSocketMetrics(),
     rateLimiter: {
       algorithm: 'Distributed Token Bucket (Redis)',
       redisBacked: isRedisConnected(),

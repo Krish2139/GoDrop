@@ -19,6 +19,14 @@ import {
   Flag 
 } from 'lucide-react';
 import RideLifecycleTimeline from '../components/RideLifecycleTimeline';
+import { 
+  getSocket, 
+  joinRideRoom, 
+  leaveRideRoom, 
+  onDispatchOffer, 
+  onRideStatusChanged, 
+  streamDriverLocation 
+} from '../services/socket';
 import './DriverPortal.css';
 
 const GPS_WAYPOINTS = [
@@ -122,7 +130,7 @@ const DriverPortal = () => {
       setCountdown(prev => {
         if (prev <= 1) {
           clearInterval(interval);
-          handleOfferTimeout(activeOffer.ride_id);
+          handleOfferTimeout(activeOffer.ride_id || activeOffer.rideId);
           return 0;
         }
         return prev - 1;
@@ -130,6 +138,66 @@ const DriverPortal = () => {
     }, 1000);
     return () => clearInterval(interval);
   }, [activeOffer, countdown]);
+
+  // Socket.IO Real-time Channels integration
+  useEffect(() => {
+    const s = getSocket();
+    if (s) {
+      // Instant Dispatch Offer Listener
+      const unsubOffer = onDispatchOffer((offer) => {
+        console.log('⚡ Incoming dispatch offer received via Socket.IO:', offer);
+        setActiveOffer({
+          id: offer.assignmentId,
+          assignment_id: offer.assignmentId,
+          ride_id: offer.rideId,
+          rideId: offer.rideId,
+          pickup_address: offer.pickupAddress,
+          destination_address: offer.destinationAddress,
+          distance_km: offer.distanceKm,
+          fare: offer.fare,
+          remaining_seconds: offer.remainingSeconds || 30,
+        });
+        setCountdown(offer.remainingSeconds || 30);
+      });
+
+      // Realtime Ride State Change Listener
+      const unsubRide = onRideStatusChanged((data) => {
+        if (data) {
+          loadDriverData();
+        }
+      });
+
+      return () => {
+        unsubOffer();
+        unsubRide();
+      };
+    }
+  }, [driver?.id]);
+
+  // Stream Live GPS Location to Ride Room & Admin Telemetry
+  useEffect(() => {
+    if (activeRide && ['DRIVER_ASSIGNED', 'DRIVER_ACCEPTED', 'DRIVER_ARRIVED', 'IN_PROGRESS'].includes(activeRide.status)) {
+      joinRideRoom(activeRide.id);
+
+      const emitLoc = () => {
+        streamDriverLocation({
+          rideId: activeRide.id,
+          latitude: simLat,
+          longitude: simLng,
+          heading: simHeading,
+          speed: activeRide.status === 'IN_PROGRESS' ? 42 : 20,
+        });
+      };
+
+      emitLoc();
+      const interval = setInterval(emitLoc, 3000);
+
+      return () => {
+        leaveRideRoom(activeRide.id);
+        clearInterval(interval);
+      };
+    }
+  }, [activeRide?.id, activeRide?.status, simLat, simLng, simHeading]);
 
   // Periodic Polling for incoming offers
   useEffect(() => {

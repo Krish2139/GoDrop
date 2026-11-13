@@ -20,6 +20,13 @@ import {
 } from 'lucide-react';
 import StatCard from '../components/StatCard';
 import RideLifecycleTimeline from '../components/RideLifecycleTimeline';
+import { 
+  getSocket, 
+  joinRideRoom, 
+  leaveRideRoom, 
+  onRideStatusChanged, 
+  onDriverLocation 
+} from '../services/socket';
 import './PassengerPortal.css';
 
 const LOCATION_PRESETS = [
@@ -42,6 +49,8 @@ const PassengerPortal = () => {
   const [bookingLoading, setBookingLoading] = useState(false);
   const [message, setMessage] = useState(null);
   const [error, setError] = useState(null);
+  const [liveDriverLocation, setLiveDriverLocation] = useState(null);
+  const [socketConnected, setSocketConnected] = useState(false);
 
   // Booking Form State
   const [pickupPreset, setPickupPreset] = useState(LOCATION_PRESETS[0].name);
@@ -105,17 +114,51 @@ const PassengerPortal = () => {
     loadData();
   }, []);
 
-  // Real-time polling for active ride status updates
+  // Socket.IO Real-time Channels integration
   useEffect(() => {
-    if (!activeRide || ['COMPLETED', 'CANCELLED'].includes(activeRide.status)) return;
-    const poll = setInterval(() => {
-      apiClient.get(`/rides/${activeRide.id}`).then(res => {
-        if (res.data.success) {
-          setActiveRide(res.data.data);
+    const s = getSocket();
+    if (s) {
+      setSocketConnected(s.connected);
+      const onConn = () => setSocketConnected(true);
+      const onDis = () => setSocketConnected(false);
+      s.on('connect', onConn);
+      s.on('disconnect', onDis);
+
+      const unsubStatus = onRideStatusChanged((data) => {
+        if (data) {
+          console.log('⚡ Realtime ride status received via Socket.IO:', data.status);
+          if (data.ride) {
+            setActiveRide(data.ride);
+          } else if (data.rideId) {
+            apiClient.get(`/rides/${data.rideId}`).then(r => r.data.success && setActiveRide(r.data.data)).catch(() => {});
+          }
         }
-      }).catch(() => {});
-    }, 3500);
-    return () => clearInterval(poll);
+      });
+
+      return () => {
+        s.off('connect', onConn);
+        s.off('disconnect', onDis);
+        unsubStatus();
+      };
+    }
+  }, []);
+
+  // Join Ride Channel & Listen to Driver GPS Location Stream
+  useEffect(() => {
+    if (activeRide?.id && !['COMPLETED', 'CANCELLED'].includes(activeRide.status)) {
+      joinRideRoom(activeRide.id);
+
+      const unsubLoc = onDriverLocation((loc) => {
+        setLiveDriverLocation(loc);
+      });
+
+      return () => {
+        leaveRideRoom(activeRide.id);
+        unsubLoc();
+      };
+    } else {
+      setLiveDriverLocation(null);
+    }
   }, [activeRide?.id, activeRide?.status]);
 
   // Update pickup preset
@@ -318,6 +361,28 @@ const PassengerPortal = () => {
                     <div style={{ fontSize: '0.72rem', color: '#059669', fontWeight: 600, marginTop: '0.2rem' }}>
                       ● Assigned & En Route
                     </div>
+                  </div>
+                </div>
+              )}
+
+              {/* Socket.IO Live Driver GPS Telemetry Stream */}
+              {liveDriverLocation && (
+                <div style={{
+                  background: '#ECFDF5',
+                  border: '1px solid #A7F3D0',
+                  borderRadius: 'var(--radius-md)',
+                  padding: '0.65rem 0.85rem',
+                  marginTop: '0.65rem',
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: '0.65rem',
+                  fontSize: '0.8rem',
+                  color: '#065F46'
+                }}>
+                  <span className="dot pulse-green" style={{ width: '8px', height: '8px', borderRadius: '50%', background: '#10B981', display: 'inline-block' }}></span>
+                  <div>
+                    <b>⚡ Socket.IO Live GPS Stream:</b> {liveDriverLocation.driverName || 'Driver'} at <code>{Number(liveDriverLocation.latitude).toFixed(4)}° N, {Number(liveDriverLocation.longitude).toFixed(4)}° E</code>
+                    {liveDriverLocation.speed > 0 && <span style={{ marginLeft: '0.4rem', color: '#047857' }}>({liveDriverLocation.speed} km/h)</span>}
                   </div>
                 </div>
               )}

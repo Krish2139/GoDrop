@@ -1,7 +1,7 @@
 import jwt from 'jsonwebtoken';
 import { logger } from '../logger.js';
 
-const JWT_SECRET = process.env.JWT_SECRET || 'super_secret_jwt_key_rideflow_academic_system_design_2026';
+export const JWT_SECRET = process.env.JWT_SECRET || 'super_secret_jwt_key_rideflow_academic_system_design_2026';
 
 /**
  * Middleware: Verifies JWT in Authorization header.

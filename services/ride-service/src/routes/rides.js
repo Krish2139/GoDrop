@@ -25,7 +25,8 @@ import {
   invalidateKey, 
   invalidatePattern, 
   rideCacheMetrics, 
-  isRedisConnected 
+  isRedisConnected,
+  publishRealtimeEvent 
 } from '../redis.js';
 
 const router = express.Router();
@@ -164,6 +165,25 @@ async function executeTransition(res, rideId, targetState, additionalFields = {}
 
       await client.query('COMMIT');
       await invalidateRideCaches(rideId);
+
+      // Realtime Event Broadcasting via Redis to Socket.IO
+      publishRealtimeEvent(`ride:${rideId}`, 'ride:status:changed', {
+        rideId,
+        status: targetState,
+        ride: updatedRide,
+      });
+      if (updatedRide.passenger_id) {
+        publishRealtimeEvent(`user:${updatedRide.passenger_id}`, 'ride:status:changed', {
+          rideId,
+          status: targetState,
+          ride: updatedRide,
+        });
+      }
+      publishRealtimeEvent('admin:telemetry', 'admin:ride:status', {
+        rideId,
+        status: targetState,
+        ride: updatedRide,
+      });
 
       logger.info({ rideId, previousStatus: ride.status, newStatus: targetState }, 'Atomic ride transition committed & cache invalidated');
 
@@ -399,6 +419,18 @@ router.post('/', async (req, res) => {
         createdRide = dispatchResult.ride;
       }
     }
+
+    // Broadcast real-time creation
+    publishRealtimeEvent(`user:${validated.passenger_id}`, 'ride:status:changed', {
+      rideId,
+      status: createdRide.status,
+      ride: createdRide,
+    });
+    publishRealtimeEvent('admin:telemetry', 'admin:ride:status', {
+      rideId,
+      status: createdRide.status,
+      ride: createdRide,
+    });
 
     return res.status(201).json({
       success: true,

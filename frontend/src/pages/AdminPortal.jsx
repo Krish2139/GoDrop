@@ -362,6 +362,46 @@ const AdminPortal = () => {
         </div>
       </div>
 
+      {/* Socket.IO Real-time Engine & Live Telemetry Channels */}
+      <div className="card">
+        <h3 className="admin-card-title">
+          <Zap size={18} className="icon-blue" /> Socket.IO Real-time Channels & Multi-tenant Stream Monitor
+        </h3>
+        <div className="telemetry-box" style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))', gap: '1rem', background: '#F8FAFC', padding: '1rem', borderRadius: 'var(--radius-md)' }}>
+          <div>
+            <span style={{ fontSize: '0.75rem', color: '#64748B', textTransform: 'uppercase', fontWeight: 600 }}>Active WebSockets</span>
+            <div style={{ fontSize: '1.4rem', fontWeight: 700, color: '#0F172A', marginTop: '0.2rem' }}>
+              {metrics?.socketio?.connectedClients ?? 1} <span style={{ fontSize: '0.75rem', fontWeight: 500, color: '#059669' }}>● Connected</span>
+            </div>
+            <div style={{ fontSize: '0.75rem', color: '#64748B' }}>Total Served: {metrics?.socketio?.totalConnectionsServed ?? 1}</div>
+          </div>
+
+          <div>
+            <span style={{ fontSize: '0.75rem', color: '#64748B', textTransform: 'uppercase', fontWeight: 600 }}>Active Channel Rooms</span>
+            <div style={{ fontSize: '1.4rem', fontWeight: 700, color: '#2563EB', marginTop: '0.2rem' }}>
+              {metrics?.socketio?.activeRoomsCount ?? 3} <span style={{ fontSize: '0.75rem', fontWeight: 500, color: '#64748B' }}>Rooms</span>
+            </div>
+            <div style={{ fontSize: '0.75rem', color: '#64748B' }}>user:*, driver:*, ride:*</div>
+          </div>
+
+          <div>
+            <span style={{ fontSize: '0.75rem', color: '#64748B', textTransform: 'uppercase', fontWeight: 600 }}>Real-time Event Throughput</span>
+            <div style={{ fontSize: '1.4rem', fontWeight: 700, color: '#7C3AED', marginTop: '0.2rem' }}>
+              {metrics?.socketio?.eventsEmitted ?? 0} <span style={{ fontSize: '0.75rem', fontWeight: 500, color: '#64748B' }}>Emitted</span>
+            </div>
+            <div style={{ fontSize: '0.75rem', color: '#64748B' }}>Received: {metrics?.socketio?.eventsReceived ?? 0} events</div>
+          </div>
+
+          <div>
+            <span style={{ fontSize: '0.75rem', color: '#64748B', textTransform: 'uppercase', fontWeight: 600 }}>Distributed Bridge</span>
+            <div style={{ fontSize: '1.4rem', fontWeight: 700, color: '#059669', marginTop: '0.2rem' }}>
+              REDIS PUB/SUB
+            </div>
+            <div style={{ fontSize: '0.75rem', color: '#64748B' }}>Multi-Service Real-Time Sync</div>
+          </div>
+        </div>
+      </div>
+
       {/* Driver Inventory Table */}
       <div className="card">
         <h3 className="admin-card-title">Driver Fleet & Geospatial Coordinates</h3>

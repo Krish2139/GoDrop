@@ -2,7 +2,7 @@ import { pool, isDbConnected, query } from './db.js';
 import { logger } from './logger.js';
 import { calculateHaversineDistance, RIDE_STATES } from './stateMachine.js';
 import { ridesStore } from './routes/rides.js';
-import { invalidateKey, invalidatePattern } from './redis.js';
+import { invalidateKey, invalidatePattern, publishRealtimeEvent } from './redis.js';
 
 async function invalidateRide(rideId) {
   await Promise.all([
@@ -287,6 +287,34 @@ export async function dispatchRide(rideId) {
       await client.query('COMMIT');
       await invalidateRide(rideId);
 
+      // Realtime Push Stream to Driver & Ride Rooms
+      publishRealtimeEvent(`driver:${selectedDriver.user_id || selectedDriver.id}`, 'dispatch:offer', {
+        assignmentId,
+        rideId,
+        pickupAddress: ride.pickup_address,
+        pickupLat: ride.pickup_latitude,
+        pickupLng: ride.pickup_longitude,
+        destinationAddress: ride.destination_address,
+        distanceKm: selectedDriver.distance_km,
+        fare: ride.fare_amount || ride.fare,
+        expiresAt: expiresAt.toISOString(),
+        remainingSeconds: OFFER_TIMEOUT_SECONDS,
+      });
+
+      publishRealtimeEvent(`ride:${rideId}`, 'ride:status:changed', {
+        rideId,
+        status: 'DRIVER_ASSIGNED',
+        ride: updatedRide,
+      });
+
+      if (ride.passenger_id) {
+        publishRealtimeEvent(`user:${ride.passenger_id}`, 'ride:status:changed', {
+          rideId,
+          status: 'DRIVER_ASSIGNED',
+          ride: updatedRide,
+        });
+      }
+
       logger.info({
         rideId,
         assignedDriverId: selectedDriver.id,
@@ -479,6 +507,34 @@ export async function acceptOffer(rideId, driverId) {
 
       await client.query('COMMIT');
       await invalidateRide(rideId);
+
+      // Realtime Push Stream to Driver & Ride Rooms
+      publishRealtimeEvent(`driver:${selectedDriver.user_id || selectedDriver.id}`, 'dispatch:offer', {
+        assignmentId,
+        rideId,
+        pickupAddress: ride.pickup_address,
+        pickupLat: ride.pickup_latitude,
+        pickupLng: ride.pickup_longitude,
+        destinationAddress: ride.destination_address,
+        distanceKm: selectedDriver.distance_km,
+        fare: ride.fare_amount || ride.fare,
+        expiresAt: expiresAt.toISOString(),
+        remainingSeconds: OFFER_TIMEOUT_SECONDS,
+      });
+
+      publishRealtimeEvent(`ride:${rideId}`, 'ride:status:changed', {
+        rideId,
+        status: 'DRIVER_ASSIGNED',
+        ride: updatedRide,
+      });
+
+      if (ride.passenger_id) {
+        publishRealtimeEvent(`user:${ride.passenger_id}`, 'ride:status:changed', {
+          rideId,
+          status: 'DRIVER_ASSIGNED',
+          ride: updatedRide,
+        });
+      }
 
       logger.info({ rideId, driverId }, 'Driver successfully accepted offer');
       return { success: true, status: 'DRIVER_ACCEPTED', ride: rideRes.rows[0] };
