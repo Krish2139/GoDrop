@@ -15,7 +15,9 @@
     "db:seed": "node database/migrate.js seed",
     "docker:db": "docker compose up -d postgres",
     "docker:all": "docker compose up -d",
-    "test": "echo \"Testing will be configured in Milestone 13\" && exit 0"
+    "test": "node --test tests/**/*.test.js",
+    "test:unit": "node --test tests/unit/*.test.js",
+    "test:integration": "node --test tests/integration/*.test.js"
   },
   "keywords": [
     "distributed-systems",
@@ -32,5 +34,9 @@
     "amqplib": "^2.3.1",
     "ioredis": "^6.0.0",
     "socket.io-client": "^4.8.4"
+  },
+  "devDependencies": {
+    "jest": "^30.5.2",
+    "supertest": "^7.3.2"
   }
 }

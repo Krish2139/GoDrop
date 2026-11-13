@@ -32,8 +32,8 @@ const Home = () => {
     { id: 10, title: 'Socket.IO Real-time Channels', status: 'completed' },
     { id: 11, title: 'Circuit Breaker & Resilience', status: 'completed' },
     { id: 12, title: 'Docker Compose Orchestration', status: 'completed' },
-    { id: 13, title: 'Jest Unit & Integration Tests', status: 'next' },
-    { id: 14, title: 'k6 Performance & Load Testing', status: 'upcoming' },
+    { id: 13, title: 'Jest Unit & Integration Tests', status: 'completed' },
+    { id: 14, title: 'k6 Performance & Load Testing', status: 'next' },
     { id: 15, title: 'Final Academic Submission & Demo', status: 'upcoming' },
   ];
 
