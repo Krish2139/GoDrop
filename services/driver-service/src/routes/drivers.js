@@ -436,10 +436,18 @@ router.get('/:id/offers', async (req, res) => {
   if (isDbConnected()) {
     try {
       const result = await query(
-        `SELECT a.*, r.pickup_address, r.destination_address, r.fare_amount
+        `SELECT a.*, 
+                r.pickup_address, 
+                r.destination_address, 
+                r.fare_amount,
+                u.name as passenger_name,
+                ROUND(EXTRACT(EPOCH FROM (a.expires_at - NOW()))) as remaining_seconds
          FROM ride_assignments a
          JOIN rides r ON a.ride_id = r.id
-         WHERE a.driver_id = $1 AND a.status = 'OFFERED' AND a.expires_at > NOW()`,
+         LEFT JOIN passengers p ON r.passenger_id = p.id
+         LEFT JOIN users u ON p.user_id = u.id
+         WHERE a.driver_id = $1 AND a.status = 'OFFERED' AND a.expires_at > NOW()
+         ORDER BY a.offered_at DESC`,
         [req.params.id]
       );
       return res.json({

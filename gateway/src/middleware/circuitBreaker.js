@@ -83,7 +83,9 @@ driverServiceBreaker.fallback(() => ({
  */
 export function createBreakerProxy(breaker, targetBaseUrl) {
   return async (req, res) => {
-    const targetUrl = `${targetBaseUrl}${req.originalUrl}`;
+    // Strip query string from path so axios params can cleanly serialize req.query without duplication
+    const pathOnly = req.originalUrl.split('?')[0];
+    const targetUrl = `${targetBaseUrl}${pathOnly}`;
     try {
       const response = await breaker.fire({
         method: req.method,

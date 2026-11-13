@@ -11,6 +11,14 @@ import {
 } from '../stateMachine.js';
 import { logger } from '../logger.js';
 import { query, isDbConnected, pool } from '../db.js';
+import { 
+  dispatchRide, 
+  acceptOffer, 
+  rejectOffer, 
+  expireOffer, 
+  assignmentsStore,
+  memoryDrivers 
+} from '../dispatchEngine.js';
 
 const router = express.Router();
 
@@ -44,6 +52,7 @@ const createRideSchema = z.object({
   destination_address: z.string().min(2, 'Destination address is required'),
   destination_latitude: z.number().min(-90).max(90),
   destination_longitude: z.number().min(-180).max(180),
+  auto_dispatch: z.boolean().optional().default(true),
 });
 
 const cancelRideSchema = z.object({
@@ -108,12 +117,20 @@ async function executeTransition(res, rideId, targetState, additionalFields = {}
         ]
       );
 
-      // If ride is completed, increment passenger total_rides count
-      if (targetState === RIDE_STATES.COMPLETED && updatedRide.passenger_id) {
-        await client.query(
-          `UPDATE passengers SET total_rides = total_rides + 1 WHERE id = $1`,
-          [updatedRide.passenger_id]
-        );
+      // If ride is completed, increment passenger total_rides count and release driver back to AVAILABLE
+      if (targetState === RIDE_STATES.COMPLETED) {
+        if (updatedRide.passenger_id) {
+          await client.query(
+            `UPDATE passengers SET total_rides = total_rides + 1 WHERE id = $1`,
+            [updatedRide.passenger_id]
+          );
+        }
+        if (updatedRide.driver_id) {
+          await client.query(
+            `UPDATE drivers SET status = 'AVAILABLE', updated_at = NOW() WHERE id = $1`,
+            [updatedRide.driver_id]
+          );
+        }
       }
 
       await client.query('COMMIT');
@@ -153,6 +170,11 @@ async function executeTransition(res, rideId, targetState, additionalFields = {}
   ride.updated_at = new Date().toISOString();
   Object.assign(ride, additionalFields);
 
+  if (targetState === RIDE_STATES.COMPLETED && ride.driver_id) {
+    const d = memoryDrivers.find(d => d.id === ride.driver_id);
+    if (d) d.status = 'AVAILABLE';
+  }
+
   return res.json({
     success: true,
     message: `Ride state successfully transitioned to ${targetState}`,
@@ -168,9 +190,13 @@ router.get('/', async (req, res) => {
   if (isDbConnected()) {
     try {
       let sql = `
-        SELECT r.*, d.name as driver_name, d.vehicle_model, d.license_plate, d.rating as driver_rating
+        SELECT r.*, d.name as driver_name, d.phone as driver_phone, d.vehicle_model, d.license_plate, d.rating as driver_rating
         FROM rides r
-        LEFT JOIN drivers d ON r.driver_id = d.id
+        LEFT JOIN (
+          SELECT dr.id, u.name, u.phone, dr.vehicle_model, dr.license_plate, dr.rating
+          FROM drivers dr
+          JOIN users u ON dr.user_id = u.id
+        ) d ON r.driver_id = d.id
         WHERE 1=1
       `;
       const params = [];
@@ -217,7 +243,7 @@ router.get('/', async (req, res) => {
   });
 });
 
-// POST /api/v1/rides - Create Ride Request
+// POST /api/v1/rides - Create Ride Request & Trigger Auto-Dispatch
 router.post('/', async (req, res) => {
   try {
     const validated = createRideSchema.parse(req.body);
@@ -231,6 +257,8 @@ router.post('/', async (req, res) => {
       validated.destination_longitude
     );
     const fare = calculateFare(distanceKm);
+
+    let createdRide = null;
 
     if (isDbConnected()) {
       let client;
@@ -260,9 +288,9 @@ router.post('/', async (req, res) => {
           ]
         );
 
-        const newRide = insertRes.rows[0];
+        createdRide = insertRes.rows[0];
 
-        // Insert Outbox Event for asynchronous dispatch processing
+        // Insert Outbox Event for ride creation
         await client.query(
           `INSERT INTO outbox_events (id, aggregate_type, aggregate_id, event_type, payload, status)
            VALUES ($1, $2, $3, $4, $5, 'PENDING')`,
@@ -271,20 +299,12 @@ router.post('/', async (req, res) => {
             'RIDE',
             rideId,
             'RIDE_REQUESTED',
-            JSON.stringify(newRide)
+            JSON.stringify(createdRide)
           ]
         );
 
         await client.query('COMMIT');
-
         logger.info({ rideId, distanceKm, fare }, 'Ride request committed in PostgreSQL');
-
-        return res.status(201).json({
-          success: true,
-          message: 'Ride request created successfully.',
-          source: 'PostgreSQL',
-          data: newRide,
-        });
       } catch (err) {
         if (client) await client.query('ROLLBACK');
         logger.error(err, 'PostgreSQL ride creation failed, falling back to memory');
@@ -293,30 +313,44 @@ router.post('/', async (req, res) => {
       }
     }
 
-    const fallbackRide = {
-      id: rideId,
-      passenger_id: validated.passenger_id,
-      passenger_name: validated.passenger_name,
-      driver_id: null,
-      status: RIDE_STATES.REQUESTED,
-      pickup_address: validated.pickup_address,
-      pickup_latitude: validated.pickup_latitude,
-      pickup_longitude: validated.pickup_longitude,
-      destination_address: validated.destination_address,
-      destination_latitude: validated.destination_latitude,
-      destination_longitude: validated.destination_longitude,
-      distance_km: distanceKm,
-      fare_amount: fare,
-      created_at: new Date().toISOString(),
-      updated_at: new Date().toISOString(),
-    };
+    if (!createdRide) {
+      createdRide = {
+        id: rideId,
+        passenger_id: validated.passenger_id,
+        passenger_name: validated.passenger_name,
+        driver_id: null,
+        status: RIDE_STATES.REQUESTED,
+        pickup_address: validated.pickup_address,
+        pickup_latitude: validated.pickup_latitude,
+        pickup_longitude: validated.pickup_longitude,
+        destination_address: validated.destination_address,
+        destination_latitude: validated.destination_latitude,
+        destination_longitude: validated.destination_longitude,
+        distance_km: distanceKm,
+        fare_amount: fare,
+        created_at: new Date().toISOString(),
+        updated_at: new Date().toISOString(),
+      };
+      ridesStore.push(createdRide);
+    }
 
-    ridesStore.push(fallbackRide);
-    res.status(201).json({
+    // AUTOMATIC DISPATCH ALGORITHM EXECUTION
+    let dispatchResult = null;
+    if (validated.auto_dispatch) {
+      dispatchResult = await dispatchRide(rideId);
+      if (dispatchResult && dispatchResult.ride) {
+        createdRide = dispatchResult.ride;
+      }
+    }
+
+    return res.status(201).json({
       success: true,
-      message: 'Ride request created successfully.',
-      source: 'InMemoryStore',
-      data: fallbackRide,
+      message: dispatchResult?.dispatched 
+        ? `Ride created! Nearest driver (${dispatchResult.driver.name}, ${dispatchResult.driver.distance_km}km) atomically reserved.`
+        : 'Ride created! System searching for nearby drivers.',
+      source: isDbConnected() ? 'PostgreSQL' : 'InMemoryStore',
+      data: createdRide,
+      dispatch: dispatchResult,
     });
   } catch (err) {
     if (err instanceof z.ZodError) {
@@ -327,14 +361,54 @@ router.post('/', async (req, res) => {
   }
 });
 
+// POST /api/v1/rides/:id/dispatch - Manually or Asynchronously Trigger Dispatch Engine
+router.post('/:id/dispatch', async (req, res) => {
+  const result = await dispatchRide(req.params.id);
+  res.json(result);
+});
+
+// GET /api/v1/rides/:id/assignments - View Dispatch Offer History for this ride
+router.get('/:id/assignments', async (req, res) => {
+  if (isDbConnected()) {
+    try {
+      const result = await query(
+        `SELECT a.*, u.name as driver_name, u.phone as driver_phone, d.vehicle_model, d.license_plate, d.rating as driver_rating
+         FROM ride_assignments a
+         JOIN drivers d ON a.driver_id = d.id
+         JOIN users u ON d.user_id = u.id
+         WHERE a.ride_id = $1
+         ORDER BY a.offered_at DESC`,
+        [req.params.id]
+      );
+      return res.json({
+        success: true,
+        total: result.rowCount,
+        source: 'PostgreSQL',
+        data: result.rows,
+      });
+    } catch (err) {
+      logger.error(err, 'PostgreSQL error fetching ride assignments');
+    }
+  }
+
+  const assignments = assignmentsStore.filter(a => a.ride_id === req.params.id);
+  res.json({
+    success: true,
+    total: assignments.length,
+    source: 'InMemoryStore',
+    data: assignments,
+  });
+});
+
 // GET /api/v1/rides/:id - Get Single Ride Details
 router.get('/:id', async (req, res) => {
   if (isDbConnected()) {
     try {
       const result = await query(
-        `SELECT r.*, d.name as driver_name, d.phone as driver_phone, d.vehicle_model, d.license_plate, d.rating as driver_rating
+        `SELECT r.*, u.name as driver_name, u.phone as driver_phone, d.vehicle_model, d.license_plate, d.rating as driver_rating
          FROM rides r
          LEFT JOIN drivers d ON r.driver_id = d.id
+         LEFT JOIN users u ON d.user_id = u.id
          WHERE r.id = $1`,
         [req.params.id]
       );
@@ -353,54 +427,115 @@ router.get('/:id', async (req, res) => {
   res.json({ success: true, source: 'InMemoryStore', data: ride });
 });
 
-// POST /api/v1/rides/:id/cancel - Cancel Ride (Eligibility Checked)
+// POST /api/v1/rides/:id/cancel - Cancel Ride (Releases driver if assigned)
 router.post('/:id/cancel', async (req, res) => {
   const { reason } = cancelRideSchema.parse(req.body || {});
 
-  // Pre-check eligibility
   if (isDbConnected()) {
+    let client;
     try {
-      const checkRes = await query('SELECT status FROM rides WHERE id = $1', [req.params.id]);
-      if (checkRes.rows.length > 0) {
-        const currentStatus = checkRes.rows[0].status;
-        if (!isCancellable(currentStatus)) {
-          return res.status(400).json({
-            success: false,
-            error: 'CannotCancelRide',
-            message: `Ride cannot be cancelled from current status '${currentStatus}'. Cancellation is permitted only from [REQUESTED, PENDING, DRIVER_ASSIGNED].`,
-            status: currentStatus,
-          });
-        }
+      client = await pool.connect();
+      await client.query('BEGIN');
+
+      const checkRes = await client.query('SELECT * FROM rides WHERE id = $1 FOR UPDATE', [req.params.id]);
+      if (checkRes.rows.length === 0) {
+        await client.query('ROLLBACK');
+        return res.status(404).json({ success: false, error: 'NotFound', message: 'Ride not found' });
       }
+
+      const ride = checkRes.rows[0];
+      if (!isCancellable(ride.status)) {
+        await client.query('ROLLBACK');
+        return res.status(400).json({
+          success: false,
+          error: 'CannotCancelRide',
+          message: `Ride cannot be cancelled from status '${ride.status}'. Only [REQUESTED, PENDING, DRIVER_ASSIGNED] are cancellable.`,
+          status: ride.status,
+        });
+      }
+
+      // If a driver was reserved for this ride, release them back to AVAILABLE
+      if (ride.driver_id) {
+        await client.query(
+          `UPDATE drivers SET status = 'AVAILABLE', updated_at = NOW() WHERE id = $1 AND status = 'RESERVED'`,
+          [ride.driver_id]
+        );
+        await client.query(
+          `UPDATE ride_assignments SET status = 'EXPIRED', responded_at = NOW() WHERE ride_id = $1 AND status = 'OFFERED'`,
+          [ride.id]
+        );
+      }
+
+      // Transition ride to CANCELLED
+      const updateRes = await client.query(
+        `UPDATE rides SET status = 'CANCELLED', cancellation_reason = $1, updated_at = NOW() WHERE id = $2 RETURNING *`,
+        [reason, req.params.id]
+      );
+
+      // Outbox Event
+      await client.query(
+        `INSERT INTO outbox_events (id, aggregate_type, aggregate_id, event_type, payload, status)
+         VALUES ($1, 'RIDE', $2, 'RIDE_CANCELLED', $3, 'PENDING')`,
+        [
+          `outbox-${Date.now()}-${Math.random().toString(36).substring(2, 6)}`,
+          req.params.id,
+          JSON.stringify(updateRes.rows[0])
+        ]
+      );
+
+      await client.query('COMMIT');
+      return res.json({
+        success: true,
+        message: 'Ride successfully cancelled. Reserved driver released.',
+        source: 'PostgreSQL',
+        data: updateRes.rows[0],
+      });
     } catch (err) {
-      logger.error(err, 'PostgreSQL cancel pre-check error');
+      if (client) await client.query('ROLLBACK');
+      logger.error(err, 'PostgreSQL cancel error');
+    } finally {
+      if (client) client.release();
     }
   }
 
+  // In-Memory Fallback
   return executeTransition(res, req.params.id, RIDE_STATES.CANCELLED, { cancellation_reason: reason });
 });
 
-// POST /api/v1/rides/:id/assign - Assign Driver (Moves to DRIVER_ASSIGNED)
-router.post('/:id/assign', (req, res) => {
+// POST /api/v1/rides/:id/accept - Driver Accepts Offer
+router.post('/:id/accept', async (req, res) => {
   const { driver_id } = req.body;
   if (!driver_id) {
     return res.status(400).json({ success: false, error: 'ValidationError', message: 'driver_id is required' });
   }
-  return executeTransition(res, req.params.id, RIDE_STATES.DRIVER_ASSIGNED, { driver_id });
+  const result = await acceptOffer(req.params.id, driver_id);
+  res.json(result);
 });
 
-// POST /api/v1/rides/:id/accept - Driver Accepts Offer (Moves to DRIVER_ACCEPTED)
-router.post('/:id/accept', (req, res) => {
-  const { driver_id } = req.body;
+// POST /api/v1/rides/:id/reject - Driver Rejects Offer (Cascades to next driver)
+router.post('/:id/reject', async (req, res) => {
+  const { driver_id, reason } = req.body || {};
   if (!driver_id) {
-    return res.status(400).json({ success: false, error: 'ValidationError', message: 'driver_id is required' });
+    // If not provided in body, fetch current driver assigned to ride
+    let currentDriverId = null;
+    if (isDbConnected()) {
+      const rideRes = await query('SELECT driver_id FROM rides WHERE id = $1', [req.params.id]);
+      if (rideRes.rows.length > 0) currentDriverId = rideRes.rows[0].driver_id;
+    } else {
+      const ride = ridesStore.find(r => r.id === req.params.id);
+      if (ride) currentDriverId = ride.driver_id;
+    }
+    const result = await rejectOffer(req.params.id, currentDriverId || 'driver-seed-1', reason || 'Driver rejected');
+    return res.json(result);
   }
-  return executeTransition(res, req.params.id, RIDE_STATES.DRIVER_ACCEPTED, { driver_id });
+  const result = await rejectOffer(req.params.id, driver_id, reason || 'Driver rejected');
+  res.json(result);
 });
 
-// POST /api/v1/rides/:id/reject - Driver Rejects Offer (Rolls back to PENDING)
-router.post('/:id/reject', (req, res) => {
-  return executeTransition(res, req.params.id, RIDE_STATES.PENDING, { driver_id: null }, 'RIDE_DRIVER_REJECTED');
+// POST /api/v1/rides/:id/expire - Offer Timed Out (30s)
+router.post('/:id/expire', async (req, res) => {
+  const result = await expireOffer(req.params.id);
+  res.json(result);
 });
 
 // POST /api/v1/rides/:id/arrived - Driver Arrived at Pickup

@@ -105,6 +105,19 @@ const PassengerPortal = () => {
     loadData();
   }, []);
 
+  // Real-time polling for active ride status updates
+  useEffect(() => {
+    if (!activeRide || ['COMPLETED', 'CANCELLED'].includes(activeRide.status)) return;
+    const poll = setInterval(() => {
+      apiClient.get(`/rides/${activeRide.id}`).then(res => {
+        if (res.data.success) {
+          setActiveRide(res.data.data);
+        }
+      }).catch(() => {});
+    }, 3500);
+    return () => clearInterval(poll);
+  }, [activeRide?.id, activeRide?.status]);
+
   // Update pickup preset
   const handlePickupChange = (e) => {
     const selected = LOCATION_PRESETS.find(p => p.name === e.target.value);
@@ -281,6 +294,33 @@ const PassengerPortal = () => {
                 <div>Fare: <b>₹{activeRide.fare_amount}</b></div>
                 <div>ID: <code>{activeRide.id.substring(0, 15)}...</code></div>
               </div>
+
+              {activeRide.driver_name && (
+                <div className="assigned-driver-card" style={{
+                  background: 'var(--slate-50)',
+                  border: '1px solid var(--slate-200)',
+                  borderRadius: 'var(--radius-md)',
+                  padding: '0.85rem 1rem',
+                  display: 'flex',
+                  justifyContent: 'space-between',
+                  alignItems: 'center',
+                  marginTop: '0.75rem'
+                }}>
+                  <div>
+                    <span style={{ fontSize: '0.72rem', color: 'var(--slate-500)', textTransform: 'uppercase', fontWeight: 700 }}>Assigned Driver</span>
+                    <h4 style={{ margin: '0.15rem 0', color: 'var(--slate-900)', fontSize: '0.95rem' }}>{activeRide.driver_name}</h4>
+                    <span style={{ fontSize: '0.8rem', color: 'var(--slate-600)' }}>{activeRide.vehicle_model} • <code>{activeRide.license_plate}</code></span>
+                  </div>
+                  <div style={{ textAlign: 'right' }}>
+                    <span style={{ display: 'inline-flex', alignItems: 'center', gap: '0.2rem', color: '#D97706', fontWeight: 700, fontSize: '0.9rem' }}>
+                      <Star size={14} /> {activeRide.driver_rating || '4.90'}
+                    </span>
+                    <div style={{ fontSize: '0.72rem', color: '#059669', fontWeight: 600, marginTop: '0.2rem' }}>
+                      ● Assigned & En Route
+                    </div>
+                  </div>
+                </div>
+              )}
 
               {['REQUESTED', 'PENDING', 'DRIVER_ASSIGNED'].includes(activeRide.status) && (
                 <button 

@@ -36,6 +36,8 @@ const DriverPortal = () => {
   const [rides, setRides] = useState([]);
   const [activeRide, setActiveRide] = useState(null);
   const [offers, setOffers] = useState([]);
+  const [activeOffer, setActiveOffer] = useState(null);
+  const [countdown, setCountdown] = useState(30);
   const [loading, setLoading] = useState(true);
   const [actionLoading, setActionLoading] = useState(false);
   const [message, setMessage] = useState(null);
@@ -89,6 +91,58 @@ const DriverPortal = () => {
   useEffect(() => {
     loadDriverData();
   }, []);
+
+  // Sync active offer & countdown
+  useEffect(() => {
+    if (offers && offers.length > 0) {
+      const off = offers[0];
+      setActiveOffer(off);
+      const remaining = off.remaining_seconds ? Math.max(1, parseInt(off.remaining_seconds, 10)) : 30;
+      setCountdown(remaining);
+    } else {
+      setActiveOffer(null);
+    }
+  }, [offers]);
+
+  // Handle Offer Expiration Timeout
+  const handleOfferTimeout = async (rideId) => {
+    try {
+      await apiClient.post(`/rides/${rideId}/expire`);
+      setMessage('Ride offer expired (30s timeout). Automatically re-dispatched to next driver.');
+      loadDriverData();
+    } catch (e) {
+      console.error(e);
+    }
+  };
+
+  // 30-Second Countdown Timer Ticker
+  useEffect(() => {
+    if (!activeOffer || countdown <= 0) return;
+    const interval = setInterval(() => {
+      setCountdown(prev => {
+        if (prev <= 1) {
+          clearInterval(interval);
+          handleOfferTimeout(activeOffer.ride_id);
+          return 0;
+        }
+        return prev - 1;
+      });
+    }, 1000);
+    return () => clearInterval(interval);
+  }, [activeOffer, countdown]);
+
+  // Periodic Polling for incoming offers
+  useEffect(() => {
+    if (!driver?.id) return;
+    const pollInterval = setInterval(() => {
+      apiClient.get(`/drivers/${driver.id}/offers`).then(res => {
+        if (res.data.success) {
+          setOffers(res.data.data || []);
+        }
+      }).catch(() => {});
+    }, 3500);
+    return () => clearInterval(pollInterval);
+  }, [driver?.id]);
 
   // Toggle Availability Status
   const handleToggleAvailability = async () => {
@@ -233,6 +287,74 @@ const DriverPortal = () => {
         <div className="portal-alert alert-error">
           <AlertCircle size={18} />
           <span>{error}</span>
+        </div>
+      )}
+
+      {/* Live Incoming Ride Offer Banner (Auto-Dispatch Engine) */}
+      {activeOffer && (
+        <div className="incoming-offer-banner">
+          <div className="offer-header">
+            <div className="offer-title">
+              <Car size={22} />
+              <span>Incoming Ride Offer!</span>
+            </div>
+            <div className="offer-timer-badge">
+              <Clock size={16} />
+              <span>Expires in {countdown}s</span>
+            </div>
+          </div>
+
+          <div className="offer-progress-track">
+            <div 
+              className="offer-progress-fill" 
+              style={{ width: `${Math.max(0, (countdown / 30) * 100)}%` }}
+            ></div>
+          </div>
+
+          <div className="offer-content-grid">
+            <div className="offer-locations">
+              <div className="location-row">
+                <span className="dot green"></span>
+                <div>
+                  <span className="loc-label" style={{ color: 'rgba(255,255,255,0.8)' }}>Pickup:</span>
+                  <p className="loc-addr" style={{ color: '#FFFFFF', fontWeight: 600 }}>{activeOffer.pickup_address}</p>
+                </div>
+              </div>
+              <div className="location-row">
+                <span className="dot red"></span>
+                <div>
+                  <span className="loc-label" style={{ color: 'rgba(255,255,255,0.8)' }}>Destination:</span>
+                  <p className="loc-addr" style={{ color: '#FFFFFF', fontWeight: 600 }}>{activeOffer.destination_address}</p>
+                </div>
+              </div>
+            </div>
+
+            <div className="offer-metrics">
+              <span style={{ fontSize: '0.85rem', color: 'rgba(255,255,255,0.85)' }}>
+                Proximity: <b>{activeOffer.distance_km} km away</b>
+              </span>
+              <div className="offer-fare">₹{activeOffer.fare_amount}</div>
+            </div>
+          </div>
+
+          <div className="offer-actions">
+            <button 
+              onClick={() => handleAcceptRide(activeOffer.ride_id)} 
+              className="btn-accept-offer"
+              disabled={actionLoading}
+            >
+              <CheckCircle2 size={18} />
+              <span>Accept Offer ({countdown}s)</span>
+            </button>
+            <button 
+              onClick={() => handleRejectRide(activeOffer.ride_id)} 
+              className="btn-reject-offer"
+              disabled={actionLoading}
+            >
+              <XCircle size={18} />
+              <span>Decline Offer</span>
+            </button>
+          </div>
         </div>
       )}
 

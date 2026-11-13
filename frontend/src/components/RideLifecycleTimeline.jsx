@@ -60,3 +60,4 @@ const RideLifecycleTimeline = ({ currentStatus }) => {
 };
 
 export default RideLifecycleTimeline;
+
