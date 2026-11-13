@@ -31,8 +31,8 @@ const Home = () => {
     { id: 9, title: 'RabbitMQ Async Worker Pipeline', status: 'completed' },
     { id: 10, title: 'Socket.IO Real-time Channels', status: 'completed' },
     { id: 11, title: 'Circuit Breaker & Resilience', status: 'completed' },
-    { id: 12, title: 'Docker Compose Orchestration', status: 'next' },
-    { id: 13, title: 'Jest Unit & Integration Tests', status: 'upcoming' },
+    { id: 12, title: 'Docker Compose Orchestration', status: 'completed' },
+    { id: 13, title: 'Jest Unit & Integration Tests', status: 'next' },
     { id: 14, title: 'k6 Performance & Load Testing', status: 'upcoming' },
     { id: 15, title: 'Final Academic Submission & Demo', status: 'upcoming' },
   ];

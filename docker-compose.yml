@@ -1,6 +1,6 @@
 services:
   # ====================================================================
-  # POSTGRESQL 16 DATABASE (Authoritative Relational Store)
+  # 1. POSTGRESQL 16 (Authoritative ACID Relational Store)
   # ====================================================================
   postgres:
     image: postgres:16-alpine
@@ -25,7 +25,7 @@ services:
       - rideflow-network
 
   # ====================================================================
-  # REDIS 7 (Cache & Token Bucket Rate Limiting)
+  # 2. REDIS 7 (Distributed Cache, Rate Limiter & Pub/Sub Event Bridge)
   # ====================================================================
   redis:
     image: redis:7-alpine
@@ -44,7 +44,7 @@ services:
       - rideflow-network
 
   # ====================================================================
-  # RABBITMQ 3.13 (Message Broker with Management UI)
+  # 3. RABBITMQ 3.13 (AMQP Topic & Dead-Letter Exchange Broker)
   # ====================================================================
   rabbitmq:
     image: rabbitmq:3.13-management-alpine
@@ -64,11 +64,183 @@ services:
     networks:
       - rideflow-network
 
+  # ====================================================================
+  # 4. API GATEWAY (Reverse Proxy, JWT Auth, Circuit Breaker, Socket.IO)
+  # ====================================================================
+  api-gateway:
+    build:
+      context: ./gateway
+      dockerfile: Dockerfile
+    container_name: rideflow-gateway
+    restart: unless-stopped
+    environment:
+      NODE_ENV: production
+      GATEWAY_PORT: 5000
+      POSTGRES_HOST: postgres
+      POSTGRES_PORT: 5432
+      POSTGRES_DB: ${POSTGRES_DB:-rideflow_db}
+      POSTGRES_USER: ${POSTGRES_USER:-rideflow_user}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-rideflow_secure_password}
+      REDIS_HOST: redis
+      REDIS_PORT: 6379
+      RIDE_SERVICE_URL: http://ride-service:5001
+      DRIVER_SERVICE_URL: http://driver-service:5002
+      JWT_SECRET: ${JWT_SECRET:-super_secret_jwt_key_rideflow_academic_system_design_2026}
+    ports:
+      - "5000:5000"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    networks:
+      - rideflow-network
+
+  # ====================================================================
+  # 5. RIDE DOMAIN SERVICE (State Machine, Outbox Relay & Dispatch)
+  # ====================================================================
+  ride-service:
+    build:
+      context: ./services/ride-service
+      dockerfile: Dockerfile
+    container_name: rideflow-ride-service
+    restart: unless-stopped
+    environment:
+      NODE_ENV: production
+      PORT: 5001
+      POSTGRES_HOST: postgres
+      POSTGRES_PORT: 5432
+      POSTGRES_DB: ${POSTGRES_DB:-rideflow_db}
+      POSTGRES_USER: ${POSTGRES_USER:-rideflow_user}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-rideflow_secure_password}
+      REDIS_HOST: redis
+      REDIS_PORT: 6379
+      RABBITMQ_HOST: rabbitmq
+      RABBITMQ_PORT: 5672
+      RABBITMQ_USER: ${RABBITMQ_USER:-guest}
+      RABBITMQ_PASSWORD: ${RABBITMQ_PASSWORD:-guest}
+      DRIVER_SERVICE_URL: http://driver-service:5002
+    ports:
+      - "5001:5001"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      rabbitmq:
+        condition: service_healthy
+    networks:
+      - rideflow-network
+
+  # ====================================================================
+  # 6. DRIVER FLEET SERVICE (Driver Profiles, Geospatial Proximity & Caching)
+  # ====================================================================
+  driver-service:
+    build:
+      context: ./services/driver-service
+      dockerfile: Dockerfile
+    container_name: rideflow-driver-service
+    restart: unless-stopped
+    environment:
+      NODE_ENV: production
+      PORT: 5002
+      POSTGRES_HOST: postgres
+      POSTGRES_PORT: 5432
+      POSTGRES_DB: ${POSTGRES_DB:-rideflow_db}
+      POSTGRES_USER: ${POSTGRES_USER:-rideflow_user}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-rideflow_secure_password}
+      REDIS_HOST: redis
+      REDIS_PORT: 6379
+    ports:
+      - "5002:5002"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    networks:
+      - rideflow-network
+
+  # ====================================================================
+  # 7. ASYNC DISPATCH WORKER (RabbitMQ Consumer & Proximity Dispatcher)
+  # ====================================================================
+  dispatch-worker:
+    build:
+      context: ./workers/dispatch-worker
+      dockerfile: Dockerfile
+    container_name: rideflow-dispatch-worker
+    restart: unless-stopped
+    environment:
+      NODE_ENV: production
+      POSTGRES_HOST: postgres
+      POSTGRES_PORT: 5432
+      POSTGRES_DB: ${POSTGRES_DB:-rideflow_db}
+      POSTGRES_USER: ${POSTGRES_USER:-rideflow_user}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-rideflow_secure_password}
+      RABBITMQ_HOST: rabbitmq
+      RABBITMQ_PORT: 5672
+      RABBITMQ_USER: ${RABBITMQ_USER:-guest}
+      RABBITMQ_PASSWORD: ${RABBITMQ_PASSWORD:-guest}
+      RIDE_SERVICE_URL: http://ride-service:5001
+    depends_on:
+      postgres:
+        condition: service_healthy
+      rabbitmq:
+        condition: service_healthy
+    networks:
+      - rideflow-network
+
+  # ====================================================================
+  # 8. NOTIFICATION WORKER (Multi-Channel Alerts & PostgreSQL Archive)
+  # ====================================================================
+  notification-worker:
+    build:
+      context: ./workers/notification-worker
+      dockerfile: Dockerfile
+    container_name: rideflow-notification-worker
+    restart: unless-stopped
+    environment:
+      NODE_ENV: production
+      POSTGRES_HOST: postgres
+      POSTGRES_PORT: 5432
+      POSTGRES_DB: ${POSTGRES_DB:-rideflow_db}
+      POSTGRES_USER: ${POSTGRES_USER:-rideflow_user}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-rideflow_secure_password}
+      RABBITMQ_HOST: rabbitmq
+      RABBITMQ_PORT: 5672
+      RABBITMQ_USER: ${RABBITMQ_USER:-guest}
+      RABBITMQ_PASSWORD: ${RABBITMQ_PASSWORD:-guest}
+    depends_on:
+      postgres:
+        condition: service_healthy
+      rabbitmq:
+        condition: service_healthy
+    networks:
+      - rideflow-network
+
+  # ====================================================================
+  # 9. FRONTEND (Vite React + Nginx Reverse Proxy)
+  # ====================================================================
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+    container_name: rideflow-frontend
+    restart: unless-stopped
+    ports:
+      - "3000:80"
+    depends_on:
+      - api-gateway
+    networks:
+      - rideflow-network
+
 volumes:
   pgdata:
+    name: rideflow-pgdata
   redisdata:
+    name: rideflow-redisdata
 
 networks:
   rideflow-network:
+    name: rideflow-network
     driver: bridge
-
