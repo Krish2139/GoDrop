@@ -1,0 +1,20 @@
+{
+  "name": "rideflow-ride-service",
+  "version": "1.0.0",
+  "description": "RideFlow Ride State Machine & Domain Microservice",
+  "main": "src/server.js",
+  "type": "module",
+  "scripts": {
+    "start": "node src/server.js",
+    "dev": "node --watch src/server.js"
+  },
+  "dependencies": {
+    "cors": "^2.8.5",
+    "dotenv": "^16.4.7",
+    "express": "^4.21.2",
+    "pino": "^9.6.0",
+    "pino-pretty": "^13.0.0",
+    "zod": "^3.24.2"
+  }
+}
+

@@ -144,3 +144,4 @@ cd frontend
 npm run dev
 ```
 Open your browser at: `http://localhost:3000`
+

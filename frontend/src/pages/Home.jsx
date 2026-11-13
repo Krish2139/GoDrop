@@ -21,8 +21,8 @@ import './Home.css';
 const Home = () => {
   const milestones = [
     { id: 1, title: 'Dev Environment & React Setup', status: 'completed' },
-    { id: 2, title: 'Express Backend & API Gateway', status: 'next' },
-    { id: 3, title: 'PostgreSQL Database & Migrations', status: 'upcoming' },
+    { id: 2, title: 'Express Backend & API Gateway', status: 'completed' },
+    { id: 3, title: 'PostgreSQL Database & Migrations', status: 'next' },
     { id: 4, title: 'JWT Auth & RBAC Security', status: 'upcoming' },
     { id: 5, title: 'Passenger & Driver Dashboards', status: 'upcoming' },
     { id: 6, title: 'Ride Lifecycle State Machine', status: 'upcoming' },
@@ -255,3 +255,4 @@ const Home = () => {
 };
 
 export default Home;
+

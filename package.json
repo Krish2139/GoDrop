@@ -6,6 +6,9 @@
   "scripts": {
     "frontend:dev": "npm --prefix frontend run dev",
     "frontend:build": "npm --prefix frontend run build",
+    "gateway:dev": "npm --prefix gateway run dev",
+    "ride:dev": "npm --prefix services/ride-service run dev",
+    "driver:dev": "npm --prefix services/driver-service run dev",
     "test": "echo \"Testing will be configured in Milestone 13\" && exit 0"
   },
   "keywords": [

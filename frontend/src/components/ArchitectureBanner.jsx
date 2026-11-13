@@ -160,3 +160,4 @@ const ArchitectureBanner = () => {
 };
 
 export default ArchitectureBanner;
+

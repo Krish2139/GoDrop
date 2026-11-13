@@ -20,3 +20,4 @@ const StatCard = ({ icon, label, value, subtext, trend, color = 'blue' }) => {
 };
 
 export default StatCard;
+

@@ -122,3 +122,4 @@ const SystemArchitecture = () => {
 };
 
 export default SystemArchitecture;
+

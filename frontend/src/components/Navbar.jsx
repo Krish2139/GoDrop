@@ -58,7 +58,7 @@ const Navbar = () => {
         <div className="navbar-actions">
           <div className="system-status-pill">
             <span className="status-dot-pulse"></span>
-            <span className="status-text">Milestone 1 Active</span>
+            <span className="status-text">Gateway & Services Online</span>
           </div>
           <button 
             className="mobile-menu-toggle"
@@ -93,3 +93,4 @@ const Navbar = () => {
 };
 
 export default Navbar;
+
