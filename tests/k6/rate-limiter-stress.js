@@ -46,3 +46,4 @@ export default function () {
     'Graceful degradation or 429 Throttled': (r) => r.status === 429 || r.status < 500,
   });
 }
+

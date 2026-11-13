@@ -34,7 +34,7 @@ const Home = () => {
     { id: 12, title: 'Docker Compose Orchestration', status: 'completed' },
     { id: 13, title: 'Jest Unit & Integration Tests', status: 'completed' },
     { id: 14, title: 'k6 Performance & Load Testing', status: 'completed' },
-    { id: 15, title: 'Final Academic Submission & Demo', status: 'next' },
+    { id: 15, title: 'Final Academic Submission & Demo', status: 'completed' },
   ];
 
   return (

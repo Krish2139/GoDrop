@@ -22,7 +22,8 @@
     "test:load:ingress": "node scripts/run-load-test.js tests/k6/gateway-ingress.js",
     "test:load:booking": "node scripts/run-load-test.js tests/k6/concurrent-booking.js",
     "test:load:ratelimit": "node scripts/run-load-test.js tests/k6/rate-limiter-stress.js",
-    "test:load:dispatch": "node scripts/run-load-test.js tests/k6/geospatial-dispatch.js"
+    "test:load:dispatch": "node scripts/run-load-test.js tests/k6/geospatial-dispatch.js",
+    "verify:all": "node scripts/verify-all.js"
   },
   "keywords": [
     "distributed-systems",

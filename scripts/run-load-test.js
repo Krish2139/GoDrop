@@ -67,3 +67,4 @@ const result = spawnSync(command, args, {
 });
 
 process.exit(result.status ?? 0);
+

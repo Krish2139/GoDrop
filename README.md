@@ -1,147 +1,126 @@
 # RideFlow – Distributed Ride Booking and Driver Dispatch System
+## 40-Mark Academic System Design Project (Complete Implementation)
 
-## Academic System Design Project (40 Marks)
-
-RideFlow is an enterprise-grade, distributed ride booking and driver dispatch platform inspired by Uber and Ola. The platform is designed to handle high concurrency, atomic driver reservations using PostgreSQL locks, asynchronous processing via RabbitMQ, sub-millisecond cache lookups and token-bucket rate limiting via Redis, and real-time bidirectional push updates via Socket.IO.
+**Setting & Operational Corridor:** Ahmedabad, Gujarat, India (SG Highway, Vastrapur Lake, CG Road, Riverfront, SVP Airport, GIFT City)  
+**System Architecture Specification:** [docs/ACADEMIC_SYSTEM_DESIGN.md](file:///C:/Users/Lenovo/Desktop/Ride/docs/ACADEMIC_SYSTEM_DESIGN.md)  
+**Evaluator Interactive Demo Guide:** [docs/DEMO_WALKTHROUGH.md](file:///C:/Users/Lenovo/Desktop/Ride/docs/DEMO_WALKTHROUGH.md)
 
 ---
 
 ## 1. System Architecture Overview
 
-```
-                      +-----------------------------+
-                      |   React.js + Vite Client   |
-                      |   (Port 3000)               |
-                      +--------------+--------------+
-                                     |
-                                     | HTTP REST & Socket.IO
-                                     v
-                      +-----------------------------+
-                      |     Express API Gateway     |
-                      |     (Port 5000)             |
-                      | - Authentication (JWT)      |
-                      | - Rate Limiter (Redis 429)  |
-                      | - Circuit Breaker (Opossum) |
-                      | - Request Correlation / Log |
-                      +-------+--------------+------+
-                              |              |
-             +----------------+              +----------------+
-             v                                                v
-+------------------------+                        +------------------------+
-|      Ride Service      |                        |     Driver Service     |
-|      (Port 5001)       |                        |      (Port 5002)       |
-| - State Machine        |                        | - Simulated GPS Ping   |
-| - Outbox Publisher     |                        | - Availability Status  |
-+-----------+------------+                        +-----------+------------+
-            |                                                 |
-            +--------------------+   +------------------------+
-                                 |   |
-                                 v   v
-                      +-----------------------------+
-                      |    PostgreSQL Database      |
-                      |    (Port 5432 - Source of   |
-                      |     Truth & Row Locks)      |
-                      +--------------+--------------+
-                                     |
-               Outbox Events Relayed |
-                                     v
-                      +-----------------------------+
-                      |   RabbitMQ Message Broker   |
-                      |   (Port 5672 / 15672)       |
-                      +-------+--------------+------+
-                              |              |
-             +----------------+              +----------------+
-             v                                                v
-+------------------------+                        +------------------------+
-|    Dispatch Worker     |                        |  Notification Worker   |
-| - Haversine Ranking    |                        | - Simulated Alerts     |
-| - Atomic DB Match Lock |                        | - Resilient Retry      |
-+------------------------+                        +------------------------+
+RideFlow is a high-concurrency distributed ride-hailing and dispatch microservices platform:
+
+```mermaid
+flowchart TD
+    Client["React 19 + Vite Frontend (:3000)\nPassenger • Driver • Admin Portals"]
+    Gateway["Express API Gateway (:5000)\nJWT Auth • Token-Bucket Rate Limiter • Opossum Breakers • Socket.IO"]
+    
+    subgraph Microservices ["Core Microservices Tier"]
+        RideSvc["Ride Service (:5001)\nState Machine • Pricing • Outbox Publisher"]
+        DriverSvc["Driver Service (:5002)\nGPS Tracking • Proximity Search • Offer Engine"]
+    end
+
+    subgraph DataTier ["Data & State Persistence"]
+        PG[("PostgreSQL 16 (:5432)\nSource of Truth • ACID Locks")]
+        RedisDB[("Redis 7 (:6379)\nDistributed Cache • Token Bucket Lua • Pub/Sub Bridge")]
+    end
+
+    subgraph AsyncPipeline ["Asynchronous Pipeline & Background Workers"]
+        RMQ{{"RabbitMQ 3.13 (:5672)\nTopic Exchanges • Durable Queues • DLQs"}}
+        DispatchWorker["Dispatch Worker\nAtomic Reservation • Proximity Matching"]
+        NotifWorker["Notification Worker\nPush Alert Dispatcher"]
+    end
+
+    Client <-->|REST API & Real-time Socket.IO| Gateway
+    Gateway -->|HTTP Proxy & Circuit Breakers| RideSvc
+    Gateway -->|HTTP Proxy & Circuit Breakers| DriverSvc
+    
+    RideSvc <-->|ACID Transactions & Outbox| PG
+    DriverSvc <-->|Spatial Queries| PG
+    
+    Gateway <-->|Lua Token Bucket & Pub/Sub| RedisDB
+    RideSvc <-->|Cache Hit/Miss| RedisDB
+    DriverSvc <-->|Driver Fleet Caching| RedisDB
+
+    RideSvc -->|Outbox Poller| RMQ
+    RMQ -->|dispatch.queue| DispatchWorker
+    RMQ -->|notification.queue| NotifWorker
+    DispatchWorker -->|Atomic Reservation| PG
+    DispatchWorker -.->|Redis Pub/Sub| Gateway
 ```
 
 ---
 
-## 2. Technology Stack
+## 2. Microservice Ports & Endpoints
 
-- **Frontend:** React 19, Vite, React Router 7, Axios, Socket.IO Client, Lucide React, Modern CSS System.
-- **Backend:** Node.js 24, Express.js, Zod (validation), Pino (logging), Opossum (circuit breaker), JWT & bcrypt.
-- **Data & Caching:** PostgreSQL 16 (ACID transactions, Row-level locking), Redis 7 (Token Bucket Rate Limiting, Query Caching).
-- **Messaging:** RabbitMQ 3.13 (Durable queues, Dead-letter exchanges, Transactional Outbox pattern).
-- **DevOps & Verification:** Docker, Docker Compose, Jest, Supertest, k6.
-
----
-
-## 3. Project Structure
-
-```
-Ride/
-│
-├── frontend/                     # React + Vite web client
-│   ├── public/                   # Static assets & SVG icons
-│   ├── src/
-│   │   ├── api/                  # Axios HTTP client & interceptors
-│   │   ├── components/           # Reusable UI widgets (Navbar, Footer, StatCard, ArchitectureBanner)
-│   │   ├── pages/                # Portals: Home, Passenger, Driver, Admin, SystemArchitecture
-│   │   ├── styles/               # CSS Design system (variables.css, global.css)
-│   │   ├── App.jsx               # Client routes & app layout
-│   │   └── main.jsx              # React DOM entry point
-│   ├── index.html                # HTML5 entry with Inter font
-│   ├── package.json              # Frontend dependencies
-│   └── vite.config.js            # Vite configuration (Port 3000)
-│
-├── gateway/                      # Express API Gateway (Milestone 2)
-├── services/
-│   ├── ride-service/             # Ride domain service (Milestone 2 & 6)
-│   └── driver-service/           # Driver location & status service (Milestone 2 & 7)
-├── workers/
-│   ├── dispatch-worker/          # Proximity ranking & atomic assignment worker (Milestone 9)
-│   └── notification-worker/      # Async simulated notifications worker (Milestone 9)
-├── database/
-│   ├── migrations/               # PostgreSQL schema DDL (Milestone 3)
-│   └── seeds/                    # Initial demo data & coordinates (Milestone 3)
-├── tests/                        # Jest & Supertest integration suites (Milestone 13)
-├── docs/                         # Academic documentation & diagrams (Milestone 15)
-├── .env.example                  # Environment configuration template
-├── .gitignore                    # Git exclusions
-├── package.json                  # Monorepo root scripts
-└── README.md                     # System documentation
-```
+| Service / Component | Port | Technology | Primary Responsibilities |
+| :--- | :---: | :--- | :--- |
+| **Web Client Portal** | `3000` | React 19, Vite, Lucide | Passenger, Driver, and Admin Portals with live maps. |
+| **API Gateway** | `5000` | Express.js, Socket.IO | Ingress routing, JWT security, Rate Limiting, Circuit Breakers. |
+| **Ride Service** | `5001` | Express.js, PostgreSQL | State machine, Haversine pricing, Transactional Outbox. |
+| **Driver Service** | `5002` | Express.js, Redis, PG | Proximity search, 3-second live GPS stream, 30s offers. |
+| **PostgreSQL 16** | `5432` | PostgreSQL | 8 tables, spatial indexing, ACID row-level locking. |
+| **Redis 7** | `6379` | Redis | Distributed token bucket Lua script, query caching, Pub/Sub. |
+| **RabbitMQ 3.13** | `5672` / `15672` | AMQP 0-9-1 | Asynchronous dispatch queue, notification queue, DLQs. |
 
 ---
 
-## 4. Milestone Progress
+## 3. All 15 Milestones Status Matrix
 
-| Milestone | Description | Status |
-|---|---|---|
-| **M1** | Development environment and React website setup | **COMPLETED & VERIFIED** |
-| **M2** | Express backend and API Gateway | Next |
-| **M3** | PostgreSQL database and migrations | Queued |
-| **M4** | Authentication and role-based access control | Queued |
-| **M5** | Passenger and Driver dashboards | Queued |
-| **M6** | Ride booking and ride lifecycle state machine | Queued |
-| **M7** | Automatic driver dispatch algorithm (Haversine & Atomic Lock) | Queued |
-| **M8** | Redis caching and distributed rate limiting (Token Bucket) | Queued |
-| **M9** | RabbitMQ and background workers (Dispatch & Notification) | Queued |
-| **M10** | Socket.IO real-time updates | Queued |
-| **M11** | Circuit breaker (Opossum), retries, logging, and metrics | Queued |
-| **M12** | Docker Compose integration | Queued |
-| **M13** | Unit tests and integration tests (Jest & Supertest) | Queued |
-| **M14** | k6 load testing and performance analysis | Queued |
-| **M15** | Final academic documentation and presentation | Queued |
+| Milestone | Focus & Deliverable | Status |
+| :---: | :--- | :---: |
+| **M1** | Development environment & React website setup | **VERIFIED DONE** |
+| **M2** | Express backend and API Gateway routing | **VERIFIED DONE** |
+| **M3** | PostgreSQL database schema, migrations & seeds | **VERIFIED DONE** |
+| **M4** | JWT Authentication & RBAC security | **VERIFIED DONE** |
+| **M5** | Passenger and Driver dashboards | **VERIFIED DONE** |
+| **M6** | Ride booking & lifecycle state machine | **VERIFIED DONE** |
+| **M7** | Atomic driver dispatch algorithm & 30s offers | **VERIFIED DONE** |
+| **M8** | Redis query caching & token-bucket rate limiting | **VERIFIED DONE** |
+| **M9** | RabbitMQ async pipeline & Transactional Outbox | **VERIFIED DONE** |
+| **M10** | Socket.IO real-time channels & GPS streaming | **VERIFIED DONE** |
+| **M11** | Opossum circuit breakers & chaos engineering | **VERIFIED DONE** |
+| **M12** | Docker Compose multi-container orchestration | **VERIFIED DONE** |
+| **M13** | Jest & Node unit and integration test suites | **VERIFIED DONE** |
+| **M14** | Grafana k6 performance, stress & load testing | **VERIFIED DONE** |
+| **M15** | Final academic documentation, walkthrough & submission | **VERIFIED DONE** |
 
 ---
 
-## 5. How to Run Milestone 1
+## 4. Evaluator Quickstart & Verification Commands
 
-### Prerequisites
-- Node.js (v18+)
-- npm (v9+)
-
-### Start the Frontend Server
-From the root project directory:
+### Run Full Master Academic Verification (All 15 Milestones)
 ```powershell
+npm run verify:all
+```
+
+### Run Automated Unit & Integration Tests (43 Tests Passed)
+```powershell
+npm test
+```
+
+### Run Grafana k6 Load Testing Suite
+```powershell
+npm run test:load
+```
+
+### Start Monorepo Services
+```powershell
+# 1. Start Infrastructure via Docker Compose
+docker compose up -d postgres redis rabbitmq
+
+# 2. Database Migration & Ahmedabad Seeds
+npm run db:migrate
+npm run db:seed
+
+# 3. Start Backend Services
+node gateway/src/server.js
+node services/ride-service/src/server.js
+node services/driver-service/src/server.js
+
+# 4. Start React Frontend
 cd frontend
 npm run dev
 ```
-Open your browser at: `http://localhost:3000`
-
+Access the application at [http://localhost:3000](http://localhost:3000).
