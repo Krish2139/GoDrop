@@ -1,0 +1,22 @@
+{
+  "name": "rideflow-distributed-system",
+  "version": "1.0.0",
+  "description": "Distributed Ride Booking and Driver Dispatch System",
+  "private": true,
+  "scripts": {
+    "frontend:dev": "npm --prefix frontend run dev",
+    "frontend:build": "npm --prefix frontend run build",
+    "test": "echo \"Testing will be configured in Milestone 13\" && exit 0"
+  },
+  "keywords": [
+    "distributed-systems",
+    "ride-dispatch",
+    "microservices",
+    "redis",
+    "rabbitmq",
+    "postgresql",
+    "docker"
+  ],
+  "author": "RideFlow Academic Team",
+  "license": "ISC"
+}
