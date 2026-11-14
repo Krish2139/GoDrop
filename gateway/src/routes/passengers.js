@@ -42,8 +42,35 @@ router.get('/profile', async (req, res) => {
         );
       }
 
-      if (result.rows.length > 0) {
+      if (result && result.rows.length > 0) {
         return res.json({ success: true, source: 'PostgreSQL', data: result.rows[0] });
+      }
+
+      if (userId) {
+        const userRes = await query('SELECT id, name, email, phone FROM users WHERE id = $1', [userId]);
+        if (userRes.rows.length > 0) {
+          const u = userRes.rows[0];
+          const newPassId = `pass-${Date.now()}`;
+          await query(
+            `INSERT INTO passengers (id, user_id, rating, total_rides)
+             VALUES ($1, $2, 5.00, 0)
+             ON CONFLICT DO NOTHING`,
+            [newPassId, u.id]
+          );
+          return res.json({
+            success: true,
+            source: 'PostgreSQL',
+            data: {
+              id: newPassId,
+              user_id: u.id,
+              name: u.name,
+              email: u.email,
+              phone: u.phone,
+              rating: 5.00,
+              total_rides: 0,
+            }
+          });
+        }
       }
     } catch (err) {
       logger.error(err, 'PostgreSQL error fetching passenger profile');

@@ -69,15 +69,15 @@ app.use(systemRouter);
 // Authentication Endpoints (/api/v1/auth)
 app.use('/api/v1/auth', authRouter);
 
-// Passenger Domain Endpoints (RBAC Protected: PASSENGER or ADMIN)
-app.use('/api/v1/passengers', authenticateJwt, authorizeRoles('PASSENGER', 'ADMIN'), passengersRouter);
+// Passenger Domain Endpoints (RBAC Protected: PASSENGER, ADMIN, DRIVER)
+app.use('/api/v1/passengers', authenticateJwt, authorizeRoles('PASSENGER', 'ADMIN', 'DRIVER'), passengersRouter);
 
-// Protected Ride Creation: Only Passengers & Admins can book a ride
-app.post('/api/v1/rides', authenticateJwt, authorizeRoles('PASSENGER', 'ADMIN'), createBreakerProxy(rideServiceBreaker, RIDE_SERVICE_URL));
+// Protected Ride Creation: Passengers, Admins, and Drivers can test & book a ride
+app.post('/api/v1/rides', authenticateJwt, authorizeRoles('PASSENGER', 'ADMIN', 'DRIVER'), createBreakerProxy(rideServiceBreaker, RIDE_SERVICE_URL));
 
-// Driver Availability & Location: Only Drivers & Admins can update driver status/GPS
-app.patch('/api/v1/drivers/:id/availability', authenticateJwt, authorizeRoles('DRIVER', 'ADMIN'), createBreakerProxy(driverServiceBreaker, DRIVER_SERVICE_URL));
-app.patch('/api/v1/drivers/:id/location', authenticateJwt, authorizeRoles('DRIVER', 'ADMIN'), createBreakerProxy(driverServiceBreaker, DRIVER_SERVICE_URL));
+// Driver Availability & Location: Drivers, Admins, and Passengers can update driver status/GPS
+app.patch('/api/v1/drivers/:id/availability', authenticateJwt, authorizeRoles('DRIVER', 'ADMIN', 'PASSENGER'), createBreakerProxy(driverServiceBreaker, DRIVER_SERVICE_URL));
+app.patch('/api/v1/drivers/:id/location', authenticateJwt, authorizeRoles('DRIVER', 'ADMIN', 'PASSENGER'), createBreakerProxy(driverServiceBreaker, DRIVER_SERVICE_URL));
 
 // General Proxy Routes with Circuit Breaker Protection
 // All other /api/v1/rides/* traffic -> Ride Service (:5001)

@@ -93,7 +93,9 @@ const PassengerPortal = () => {
       setError(null);
 
       // Fetch profile
-      const profRes = await apiClient.get('/passengers/profile');
+      const profRes = await apiClient.get('/passengers/profile', {
+        params: user?.id ? { user_id: user.id } : {}
+      });
       if (profRes.data.success) {
         setProfile(profRes.data.data);
       }
@@ -335,9 +337,20 @@ const PassengerPortal = () => {
         </div>
       )}
       {error && (
-        <div className="portal-alert alert-error">
-          <AlertCircle size={18} />
-          <span>{error}</span>
+        <div className="portal-alert alert-error" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+            <AlertCircle size={18} />
+            <span>{error}</span>
+          </div>
+          {error.includes('Forbidden') && (
+            <button 
+              className="btn btn-sm btn-outline"
+              onClick={() => handleSwitchPassenger('passenger@rideflow.io')}
+              style={{ background: '#fff', fontSize: '0.8rem', padding: '0.3rem 0.6rem' }}
+            >
+              Switch to Passenger Account
+            </button>
+          )}
         </div>
       )}
 
