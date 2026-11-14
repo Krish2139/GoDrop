@@ -82,6 +82,9 @@ export function initSocketServer(httpServer) {
           } else {
             io.emit(event, data);
           }
+          if (event === 'ride:status:changed') {
+            io.emit('ride:status:changed', data);
+          }
           socketMetrics.eventsEmitted++;
           logger.debug({ room, event }, 'Distributed event relayed from Redis to Socket.IO');
         } catch (parseErr) {

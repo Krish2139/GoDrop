@@ -119,6 +119,24 @@ const PassengerPortal = () => {
 
   useEffect(() => {
     loadData();
+  }, [user?.id]);
+
+  // Automatic Polling to guarantee instant portal-to-portal synchronization
+  useEffect(() => {
+    const pollInterval = setInterval(() => {
+      apiClient.get('/rides').then(ridesRes => {
+        if (ridesRes.data?.success) {
+          const allRides = ridesRes.data.data || [];
+          setRides(allRides);
+          const currentActive = allRides.find(
+            r => !['COMPLETED', 'CANCELLED'].includes(r.status)
+          );
+          setActiveRide(currentActive || null);
+        }
+      }).catch(() => {});
+    }, 2500);
+
+    return () => clearInterval(pollInterval);
   }, []);
 
   // Socket.IO Real-time Channels integration
@@ -134,11 +152,7 @@ const PassengerPortal = () => {
       const unsubStatus = onRideStatusChanged((data) => {
         if (data) {
           console.log('⚡ Realtime ride status received via Socket.IO:', data.status);
-          if (data.ride) {
-            setActiveRide(data.ride);
-          } else if (data.rideId) {
-            apiClient.get(`/rides/${data.rideId}`).then(r => r.data.success && setActiveRide(r.data.data)).catch(() => {});
-          }
+          loadData();
         }
       });
 

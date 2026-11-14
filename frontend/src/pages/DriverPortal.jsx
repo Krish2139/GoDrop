@@ -238,6 +238,35 @@ const DriverPortal = () => {
     }
   }, [driver?.id]);
 
+  // Automatic Polling to keep driver state seamlessly synchronized
+  useEffect(() => {
+    const pollInterval = setInterval(() => {
+      if (!driver?.id) return;
+      apiClient.get(`/drivers/${driver.id}/offers`).then(res => {
+        if (res.data?.success) {
+          const list = res.data.data || [];
+          setOffers(list);
+          if (list.length > 0) {
+            setActiveOffer(list[0]);
+          }
+        }
+      }).catch(() => {});
+
+      apiClient.get('/rides').then(res => {
+        if (res.data?.success) {
+          const allRides = res.data.data || [];
+          setRides(allRides);
+          const myActive = allRides.find(
+            r => r.driver_id === driver.id && ['DRIVER_ASSIGNED', 'DRIVER_ACCEPTED', 'DRIVER_ARRIVED', 'IN_PROGRESS'].includes(r.status)
+          );
+          setActiveRide(myActive || null);
+        }
+      }).catch(() => {});
+    }, 2500);
+
+    return () => clearInterval(pollInterval);
+  }, [driver?.id]);
+
   // Stream Live GPS Location to Ride Room & Admin Telemetry
   useEffect(() => {
     if (activeRide && ['DRIVER_ASSIGNED', 'DRIVER_ACCEPTED', 'DRIVER_ARRIVED', 'IN_PROGRESS'].includes(activeRide.status)) {

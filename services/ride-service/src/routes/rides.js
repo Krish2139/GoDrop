@@ -123,15 +123,22 @@ async function executeTransition(res, rideId, targetState, additionalFields = {}
       const cancellationReason = additionalFields.cancellation_reason || ride.cancellation_reason;
 
       // Update Ride record
-      const updateRes = await client.query(
+      await client.query(
         `UPDATE rides 
          SET status = $1, driver_id = $2, cancellation_reason = $3, updated_at = NOW() 
-         WHERE id = $4 
-         RETURNING *`,
+         WHERE id = $4`,
         [targetState, driverId, cancellationReason, rideId]
       );
 
-      const updatedRide = updateRes.rows[0];
+      const fullSelectRes = await client.query(
+        `SELECT r.*, u.name as driver_name, u.phone as driver_phone, d.vehicle_model, d.license_plate, d.rating as driver_rating
+         FROM rides r
+         LEFT JOIN drivers d ON r.driver_id = d.id
+         LEFT JOIN users u ON d.user_id = u.id
+         WHERE r.id = $1`,
+        [rideId]
+      );
+      const updatedRide = fullSelectRes.rows[0];
 
       // Insert Transactional Outbox Event
       const eventType = outboxEventType || `RIDE_${targetState}`;

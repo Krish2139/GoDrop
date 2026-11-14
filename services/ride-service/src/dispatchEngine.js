@@ -481,12 +481,20 @@ export async function acceptOffer(rideId, driverId) {
         [driverId]
       );
 
-      // 4. Update ride to DRIVER_ACCEPTED
-      const rideRes = await client.query(
-        `UPDATE rides SET status = 'DRIVER_ACCEPTED', updated_at = NOW() WHERE id = $1 RETURNING *`,
+      // 4. Update ride to DRIVER_ACCEPTED and query full joined driver info
+      await client.query(
+        `UPDATE rides SET status = 'DRIVER_ACCEPTED', updated_at = NOW() WHERE id = $1`,
         [rideId]
       );
-      const updatedRide = rideRes.rows[0];
+      const fullRideRes = await client.query(
+        `SELECT r.*, u.name as driver_name, u.phone as driver_phone, d.vehicle_model, d.license_plate, d.rating as driver_rating
+         FROM rides r
+         LEFT JOIN drivers d ON r.driver_id = d.id
+         LEFT JOIN users u ON d.user_id = u.id
+         WHERE r.id = $1`,
+        [rideId]
+      );
+      const updatedRide = fullRideRes.rows[0];
 
       // 5. Outbox Event
       await client.query(
