@@ -57,9 +57,10 @@ const PassengerPortal = () => {
 
   // No Drivers Available Pop Modal State
   const [showNoDriverModal, setShowNoDriverModal] = useState(false);
-  const [noDriverReason, setNoDriverReason] = useState('All nearby drivers have declined or are currently busy.');
+  const [noDriverReason, setNoDriverReason] = useState('All nearby drivers have declined or are currently busy. Your ride request has been automatically cancelled.');
   const [retryingDispatch, setRetryingDispatch] = useState(false);
   const [dismissedModalRideId, setDismissedModalRideId] = useState(null);
+  const [cancelledRideInfo, setCancelledRideInfo] = useState(null);
 
   // Automatically pop up modal when active ride is in PENDING state (No driver available)
   useEffect(() => {
@@ -127,6 +128,18 @@ const PassengerPortal = () => {
           r => !['COMPLETED', 'CANCELLED'].includes(r.status)
         );
         setActiveRide(currentActive || null);
+
+        // Check if most recent ride was auto-cancelled due to NO_DRIVERS
+        if (allRides.length > 0 && allRides[0].status === 'CANCELLED' && (allRides[0].cancellation_reason?.includes('NO_DRIVERS') || allRides[0].cancellation_reason?.includes('DRIVERS_BUSY'))) {
+          const cancelKey = `notified_no_driver_${allRides[0].id}`;
+          if (!sessionStorage.getItem(cancelKey)) {
+            sessionStorage.setItem(cancelKey, 'true');
+            setShowNoDriverModal(true);
+            setCancelledRideInfo(allRides[0]);
+            setNoDriverReason('No drivers available at this moment. All nearby drivers have declined the ride request. Your ride request has been automatically cancelled.');
+            setMessage('Ride request automatically cancelled: No drivers were available to accept.');
+          }
+        }
       }
     } catch (err) {
       setError(err.response?.data?.message || 'Error loading passenger data');
@@ -150,6 +163,18 @@ const PassengerPortal = () => {
             r => !['COMPLETED', 'CANCELLED'].includes(r.status)
           );
           setActiveRide(currentActive || null);
+
+          // Check if most recent ride was auto-cancelled due to NO_DRIVERS
+          if (allRides.length > 0 && allRides[0].status === 'CANCELLED' && (allRides[0].cancellation_reason?.includes('NO_DRIVERS') || allRides[0].cancellation_reason?.includes('DRIVERS_BUSY'))) {
+            const cancelKey = `notified_no_driver_${allRides[0].id}`;
+            if (!sessionStorage.getItem(cancelKey)) {
+              sessionStorage.setItem(cancelKey, 'true');
+              setShowNoDriverModal(true);
+              setCancelledRideInfo(allRides[0]);
+              setNoDriverReason('No drivers available at this moment. All nearby drivers have declined the ride request. Your ride request has been automatically cancelled.');
+              setMessage('Ride request automatically cancelled: No drivers were available to accept.');
+            }
+          }
         }
       }).catch(() => {});
     }, 2500);
@@ -450,15 +475,15 @@ const PassengerPortal = () => {
               <AlertTriangle size={32} />
             </div>
 
-            <h3 style={{ fontSize: '1.3rem', fontWeight: 800, color: '#1E293B', marginBottom: '0.5rem' }}>
+            <h3 style={{ fontSize: '1.35rem', fontWeight: 800, color: '#1E293B', marginBottom: '0.5rem' }}>
               No Driver Available At This Moment
             </h3>
 
             <p style={{ fontSize: '0.92rem', color: '#64748B', lineHeight: 1.5, marginBottom: '1.25rem' }}>
-              {noDriverReason || 'All nearby drivers have declined the ride request or are currently unavailable. We could not match your ride at this time.'}
+              {noDriverReason || 'All nearby drivers have declined the ride request or are currently unavailable. Your ride request has been automatically cancelled.'}
             </p>
 
-            {activeRide && (
+            {(activeRide || cancelledRideInfo) && (
               <div style={{
                 background: '#F8FAFC',
                 border: '1px solid #E2E8F0',
@@ -470,36 +495,37 @@ const PassengerPortal = () => {
               }}>
                 <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '0.35rem' }}>
                   <span style={{ color: '#64748B' }}>Pickup:</span>
-                  <b style={{ color: '#1E293B' }}>{activeRide.pickup_address}</b>
+                  <b style={{ color: '#1E293B' }}>{(activeRide || cancelledRideInfo).pickup_address}</b>
                 </div>
                 <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '0.35rem' }}>
                   <span style={{ color: '#64748B' }}>Destination:</span>
-                  <b style={{ color: '#1E293B' }}>{activeRide.destination_address}</b>
+                  <b style={{ color: '#1E293B' }}>{(activeRide || cancelledRideInfo).destination_address}</b>
                 </div>
                 <div style={{ display: 'flex', justifyContent: 'space-between' }}>
                   <span style={{ color: '#64748B' }}>Fare:</span>
-                  <b style={{ color: '#2563EB' }}>₹{activeRide.fare_amount}</b>
+                  <b style={{ color: '#2563EB' }}>₹{(activeRide || cancelledRideInfo).fare_amount}</b>
                 </div>
               </div>
             )}
 
             <div style={{ display: 'flex', flexDirection: 'column', gap: '0.65rem' }}>
               <button 
-                onClick={handleRetryDispatch}
-                disabled={retryingDispatch}
+                onClick={() => {
+                  handleCloseModal();
+                  document.querySelector('.booking-card')?.scrollIntoView({ behavior: 'smooth' });
+                }}
                 className="btn btn-primary"
                 style={{ width: '100%', padding: '0.75rem', justifyContent: 'center', fontSize: '0.95rem' }}
               >
-                <RefreshCw size={16} className={retryingDispatch ? 'spin' : ''} />
-                <span>{retryingDispatch ? 'Searching Again...' : 'Retry Driver Search'}</span>
+                <Car size={16} /> Book Another Ride
               </button>
 
               <button 
-                onClick={handleCancelFromModal}
+                onClick={handleCloseModal}
                 className="btn btn-outline"
-                style={{ width: '100%', padding: '0.75rem', justifyContent: 'center', color: '#DC2626', borderColor: '#FCA5A5' }}
+                style={{ width: '100%', padding: '0.75rem', justifyContent: 'center' }}
               >
-                <XCircle size={16} /> Cancel Ride Request
+                Dismiss
               </button>
             </div>
           </div>

@@ -139,10 +139,10 @@ export async function dispatchRide(rideId) {
       const candidateDrivers = candidateDriversRes.rows;
 
       if (candidateDrivers.length === 0) {
-        // No drivers available: transition ride to PENDING
+        // No drivers available: automatically cancel ride request
         await client.query(
           `UPDATE rides 
-           SET status = 'PENDING', driver_id = NULL, updated_at = NOW() 
+           SET status = 'CANCELLED', driver_id = NULL, cancellation_reason = 'NO_DRIVERS_AVAILABLE', updated_at = NOW() 
            WHERE id = $1`,
           [rideId]
         );
@@ -150,49 +150,52 @@ export async function dispatchRide(rideId) {
         // Outbox event
         await client.query(
           `INSERT INTO outbox_events (id, aggregate_type, aggregate_id, event_type, payload, status)
-           VALUES ($1, 'RIDE', $2, 'RIDE_DISPATCH_PENDING_NO_DRIVER', $3, 'PENDING')`,
+           VALUES ($1, 'RIDE', $2, 'RIDE_CANCELLED_NO_DRIVERS', $3, 'PENDING')`,
           [
             `outbox-${Date.now()}-${Math.random().toString(36).substring(2, 6)}`,
             rideId,
-            JSON.stringify({ rideId, status: 'PENDING', reason: 'No available drivers found' })
+            JSON.stringify({ rideId, status: 'CANCELLED', reason: 'No drivers available at this moment. Automatically cancelled.' })
           ]
         );
 
         await client.query('COMMIT');
         await invalidateRide(rideId);
-        logger.warn({ rideId }, 'No eligible drivers available. Ride moved to PENDING status.');
+        logger.warn({ rideId }, 'All eligible drivers rejected or unavailable. Ride automatically CANCELLED.');
 
         // Broadcast real-time events to passenger & ride rooms
         publishRealtimeEvent(`ride:${rideId}`, 'ride:status:changed', {
           rideId,
-          status: 'PENDING',
+          status: 'CANCELLED',
           noDriversAvailable: true,
-          message: 'No drivers available at this moment. All nearby drivers declined or are currently busy.',
-          ride: { ...ride, status: 'PENDING', driver_id: null },
+          cancellation_reason: 'NO_DRIVERS_AVAILABLE',
+          message: 'No drivers available at this moment. All nearby drivers have declined the ride request. Your ride request has been automatically cancelled.',
+          ride: { ...ride, status: 'CANCELLED', driver_id: null, cancellation_reason: 'NO_DRIVERS_AVAILABLE' },
         });
 
         publishRealtimeEvent(`ride:${rideId}`, 'ride:no_drivers_available', {
           rideId,
-          status: 'PENDING',
-          message: 'No drivers available at this moment. All nearby drivers declined or are currently busy.',
-          ride: { ...ride, status: 'PENDING', driver_id: null },
+          status: 'CANCELLED',
+          cancellation_reason: 'NO_DRIVERS_AVAILABLE',
+          message: 'No drivers available at this moment. All nearby drivers have declined the ride request. Your ride request has been automatically cancelled.',
+          ride: { ...ride, status: 'CANCELLED', driver_id: null, cancellation_reason: 'NO_DRIVERS_AVAILABLE' },
         });
 
         if (ride.passenger_id) {
           publishRealtimeEvent(`user:${ride.passenger_id}`, 'ride:no_drivers_available', {
             rideId,
-            status: 'PENDING',
-            message: 'No drivers available at this moment. All nearby drivers declined or are currently busy.',
-            ride: { ...ride, status: 'PENDING', driver_id: null },
+            status: 'CANCELLED',
+            cancellation_reason: 'NO_DRIVERS_AVAILABLE',
+            message: 'No drivers available at this moment. All nearby drivers have declined the ride request. Your ride request has been automatically cancelled.',
+            ride: { ...ride, status: 'CANCELLED', driver_id: null, cancellation_reason: 'NO_DRIVERS_AVAILABLE' },
           });
         }
 
         return {
           success: true,
           dispatched: false,
-          status: 'PENDING',
+          status: 'CANCELLED',
           noDriversAvailable: true,
-          message: 'No available drivers nearby. Ride queued in PENDING state for retry.',
+          message: 'No drivers available at this moment. Your ride request has been automatically cancelled.',
         };
       }
 
@@ -216,25 +219,35 @@ export async function dispatchRide(rideId) {
 
       if (rankedCandidates.length === 0) {
         await client.query(
-          `UPDATE rides SET status = 'PENDING', driver_id = NULL, updated_at = NOW() WHERE id = $1`,
+          `UPDATE rides SET status = 'CANCELLED', driver_id = NULL, cancellation_reason = 'NO_DRIVERS_IN_RADIUS', updated_at = NOW() WHERE id = $1`,
           [rideId]
         );
         await client.query('COMMIT');
         await invalidateRide(rideId);
 
+        publishRealtimeEvent(`ride:${rideId}`, 'ride:status:changed', {
+          rideId,
+          status: 'CANCELLED',
+          noDriversAvailable: true,
+          cancellation_reason: 'NO_DRIVERS_IN_RADIUS',
+          message: `No drivers available within ${MAX_DISPATCH_RADIUS_KM}km radius. Your ride request has been automatically cancelled.`,
+          ride: { ...ride, status: 'CANCELLED', driver_id: null, cancellation_reason: 'NO_DRIVERS_IN_RADIUS' },
+        });
+
         publishRealtimeEvent(`ride:${rideId}`, 'ride:no_drivers_available', {
           rideId,
-          status: 'PENDING',
-          message: `No drivers available within ${MAX_DISPATCH_RADIUS_KM}km radius.`,
-          ride: { ...ride, status: 'PENDING', driver_id: null },
+          status: 'CANCELLED',
+          cancellation_reason: 'NO_DRIVERS_IN_RADIUS',
+          message: `No drivers available within ${MAX_DISPATCH_RADIUS_KM}km radius. Your ride request has been automatically cancelled.`,
+          ride: { ...ride, status: 'CANCELLED', driver_id: null, cancellation_reason: 'NO_DRIVERS_IN_RADIUS' },
         });
 
         return {
           success: true,
           dispatched: false,
-          status: 'PENDING',
+          status: 'CANCELLED',
           noDriversAvailable: true,
-          message: `No drivers within ${MAX_DISPATCH_RADIUS_KM}km radius. Ride set to PENDING.`,
+          message: `No drivers within ${MAX_DISPATCH_RADIUS_KM}km radius. Ride automatically cancelled.`,
         };
       }
 
@@ -261,16 +274,35 @@ export async function dispatchRide(rideId) {
       if (!selectedDriver) {
         // All candidates were locked concurrently
         await client.query(
-          `UPDATE rides SET status = 'PENDING', driver_id = NULL, updated_at = NOW() WHERE id = $1`,
+          `UPDATE rides SET status = 'CANCELLED', driver_id = NULL, cancellation_reason = 'ALL_DRIVERS_BUSY', updated_at = NOW() WHERE id = $1`,
           [rideId]
         );
         await client.query('COMMIT');
-      await invalidateRide(rideId);
+        await invalidateRide(rideId);
+
+        publishRealtimeEvent(`ride:${rideId}`, 'ride:status:changed', {
+          rideId,
+          status: 'CANCELLED',
+          noDriversAvailable: true,
+          cancellation_reason: 'ALL_DRIVERS_BUSY',
+          message: 'All eligible drivers are currently reserved. Your ride request has been automatically cancelled.',
+          ride: { ...ride, status: 'CANCELLED', driver_id: null, cancellation_reason: 'ALL_DRIVERS_BUSY' },
+        });
+
+        publishRealtimeEvent(`ride:${rideId}`, 'ride:no_drivers_available', {
+          rideId,
+          status: 'CANCELLED',
+          cancellation_reason: 'ALL_DRIVERS_BUSY',
+          message: 'All eligible drivers are currently reserved. Your ride request has been automatically cancelled.',
+          ride: { ...ride, status: 'CANCELLED', driver_id: null, cancellation_reason: 'ALL_DRIVERS_BUSY' },
+        });
+
         return {
           success: true,
           dispatched: false,
-          status: 'PENDING',
-          message: 'All eligible drivers are currently reserved. Ride set to PENDING.',
+          status: 'CANCELLED',
+          noDriversAvailable: true,
+          message: 'All eligible drivers are currently reserved. Ride automatically cancelled.',
         };
       }
 
