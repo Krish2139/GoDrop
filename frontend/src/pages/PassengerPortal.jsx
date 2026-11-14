@@ -55,7 +55,10 @@ const PassengerPortal = () => {
   const [liveDriverLocation, setLiveDriverLocation] = useState(null);
   const [socketConnected, setSocketConnected] = useState(false);
 
-  // No Drivers Available Pop Modal State
+  // No Drivers Available State (Stays on screen for 1 minute in red)
+  const [noDriverAlert, setNoDriverAlert] = useState(null);
+  const [alertCountdown, setAlertCountdown] = useState(60);
+  const [dismissedAlertRideId, setDismissedAlertRideId] = useState(null);
   const [showNoDriverModal, setShowNoDriverModal] = useState(false);
   const [noDriverReason, setNoDriverReason] = useState('All nearby drivers have declined or are currently busy. Your ride request has been automatically cancelled.');
   const [retryingDispatch, setRetryingDispatch] = useState(false);
@@ -63,7 +66,42 @@ const PassengerPortal = () => {
   const [cancelledRideInfo, setCancelledRideInfo] = useState(null);
   const [modalCountdown, setModalCountdown] = useState(60);
 
-  // Keep No Driver Modal visible on screen for 1 minute (60 seconds) with live countdown & auto-dismiss
+  const triggerNoDriverAlert = (rideInfo) => {
+    setNoDriverAlert(rideInfo || true);
+    setAlertCountdown(60);
+    setShowNoDriverModal(true);
+    setModalCountdown(60);
+    setMessage(null);
+    if (rideInfo) {
+      setCancelledRideInfo(rideInfo);
+    }
+  };
+
+  // Keep No Driver Red Alert visible on screen for 1 minute (60 seconds) with countdown
+  useEffect(() => {
+    let timer;
+    if (noDriverAlert) {
+      setAlertCountdown(60);
+      timer = setInterval(() => {
+        setAlertCountdown(prev => {
+          if (prev <= 1) {
+            clearInterval(timer);
+            setNoDriverAlert(null);
+            setShowNoDriverModal(false);
+            if (cancelledRideInfo?.id) {
+              setDismissedAlertRideId(cancelledRideInfo.id);
+              setDismissedModalRideId(cancelledRideInfo.id);
+            }
+            return 0;
+          }
+          return prev - 1;
+        });
+      }, 1000);
+    }
+    return () => clearInterval(timer);
+  }, [noDriverAlert, cancelledRideInfo?.id]);
+
+  // Keep No Driver Modal in sync for 1 minute (60 seconds) with live countdown & auto-dismiss
   useEffect(() => {
     let timer;
     if (showNoDriverModal) {
@@ -73,9 +111,11 @@ const PassengerPortal = () => {
           if (prev <= 1) {
             clearInterval(timer);
             setShowNoDriverModal(false);
+            setNoDriverAlert(null);
             const rideIdToDismiss = activeRide?.id || cancelledRideInfo?.id;
             if (rideIdToDismiss) {
               setDismissedModalRideId(rideIdToDismiss);
+              setDismissedAlertRideId(rideIdToDismiss);
             }
             return 0;
           }
@@ -160,10 +200,8 @@ const PassengerPortal = () => {
         );
         if (cancelledNoDrivers) {
           setCancelledRideInfo(cancelledNoDrivers);
-          if (dismissedModalRideId !== cancelledNoDrivers.id) {
-            setShowNoDriverModal(true);
-            setNoDriverReason('No drivers available at this moment. All nearby drivers have declined the ride request. Your ride request has been automatically cancelled.');
-            setMessage('Ride request automatically cancelled: No drivers available.');
+          if (dismissedAlertRideId !== cancelledNoDrivers.id) {
+            triggerNoDriverAlert(cancelledNoDrivers);
           }
         }
       }
@@ -196,10 +234,8 @@ const PassengerPortal = () => {
           );
           if (cancelledNoDrivers) {
             setCancelledRideInfo(cancelledNoDrivers);
-            if (dismissedModalRideId !== cancelledNoDrivers.id) {
-              setShowNoDriverModal(true);
-              setNoDriverReason('No drivers available at this moment. All nearby drivers have declined the ride request. Your ride request has been automatically cancelled.');
-              setMessage('Ride request automatically cancelled: No drivers available.');
+            if (dismissedAlertRideId !== cancelledNoDrivers.id) {
+              triggerNoDriverAlert(cancelledNoDrivers);
             }
           }
         }
@@ -207,7 +243,7 @@ const PassengerPortal = () => {
     }, 2500);
 
     return () => clearInterval(pollInterval);
-  }, [profile?.id]);
+  }, [profile?.id, dismissedAlertRideId]);
 
   // Socket.IO Real-time Channels integration
   useEffect(() => {
@@ -223,9 +259,7 @@ const PassengerPortal = () => {
         if (data) {
           console.log('⚡ Realtime ride status received via Socket.IO:', data.status);
           if (data.noDriversAvailable || (data.status === 'CANCELLED' && data.cancellation_reason?.includes('NO_DRIVERS'))) {
-            setShowNoDriverModal(true);
-            if (data.message) setNoDriverReason(data.message);
-            if (data.ride) setCancelledRideInfo(data.ride);
+            triggerNoDriverAlert(data.ride || { id: data.rideId });
           }
           loadData();
         }
@@ -233,9 +267,7 @@ const PassengerPortal = () => {
 
       const unsubNoDrivers = onNoDriversAvailable((data) => {
         console.warn('⚠️ No drivers available event received:', data);
-        setShowNoDriverModal(true);
-        if (data?.message) setNoDriverReason(data.message);
-        if (data?.ride) setCancelledRideInfo(data.ride);
+        triggerNoDriverAlert(data?.ride || { id: data?.rideId });
         loadData();
       });
 
@@ -294,6 +326,8 @@ const PassengerPortal = () => {
     setBookingLoading(true);
     setError(null);
     setMessage(null);
+    setNoDriverAlert(null);
+    setDismissedAlertRideId(null);
     setDismissedModalRideId(null);
     setCancelledRideInfo(null);
     setShowNoDriverModal(false);
@@ -312,11 +346,7 @@ const PassengerPortal = () => {
 
       const res = await apiClient.post('/rides', payload);
       if (res.data.success) {
-        const assignedDriver = res.data.dispatch?.driver;
-        const driverNotice = assignedDriver 
-          ? ` Nearest driver assigned: ${assignedDriver.name} (${assignedDriver.vehicle_model || 'Vehicle'}, ${assignedDriver.license_plate}). You can open the Driver Portal and switch to their account to accept & complete the trip!` 
-          : ' System is matching nearest available driver.';
-        setMessage('Ride request created!' + driverNotice);
+        setMessage(null); // Green popup removed as requested
         setActiveRide(res.data.data);
         await loadData();
       }
@@ -614,7 +644,94 @@ const PassengerPortal = () => {
       </div>
 
       {/* Alerts */}
-      {message && (
+      {/* Red Alert Banner: Shown in place of green popup when all drivers reject (stays for 1 minute) */}
+      {noDriverAlert && (
+        <div 
+          className="portal-alert" 
+          style={{
+            background: '#FEF2F2',
+            border: '1.5px solid #FCA5A5',
+            color: '#991B1B',
+            borderRadius: '10px',
+            padding: '1rem 1.25rem',
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'space-between',
+            boxShadow: '0 4px 12px rgba(220, 38, 38, 0.12)',
+            marginBottom: '1rem'
+          }}
+        >
+          <div style={{ display: 'flex', alignItems: 'center', gap: '0.85rem' }}>
+            <div style={{
+              width: '38px',
+              height: '38px',
+              borderRadius: '50%',
+              backgroundColor: '#FEE2E2',
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'center',
+              flexShrink: 0,
+              color: '#DC2626'
+            }}>
+              <AlertTriangle size={22} />
+            </div>
+            <div>
+              <div style={{ fontWeight: 800, fontSize: '0.98rem', color: '#991B1B', display: 'flex', alignItems: 'center', gap: '0.65rem' }}>
+                <span>No Drivers Available At This Moment</span>
+                <span style={{
+                  background: '#FEE2E2',
+                  color: '#B91C1C',
+                  fontSize: '0.75rem',
+                  fontWeight: 700,
+                  padding: '0.15rem 0.6rem',
+                  borderRadius: '9999px',
+                  border: '1px solid #FCA5A5',
+                  display: 'inline-flex',
+                  alignItems: 'center',
+                  gap: '0.3rem'
+                }}>
+                  <Clock size={12} /> {alertCountdown}s remaining (1 min)
+                </span>
+              </div>
+              <div style={{ fontSize: '0.88rem', color: '#7F1D1D', marginTop: '0.25rem', lineHeight: 1.4 }}>
+                All nearby drivers have declined the ride request. Your ride request has been automatically cancelled.
+              </div>
+            </div>
+          </div>
+          <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', flexShrink: 0 }}>
+            <button
+              onClick={() => {
+                setNoDriverAlert(null);
+                document.querySelector('.booking-card')?.scrollIntoView({ behavior: 'smooth' });
+              }}
+              className="btn btn-sm btn-primary"
+              style={{ padding: '0.45rem 0.85rem', fontSize: '0.82rem' }}
+            >
+              <Car size={14} /> Book Another Ride
+            </button>
+            <button
+              onClick={() => {
+                setNoDriverAlert(null);
+                if (cancelledRideInfo?.id) setDismissedAlertRideId(cancelledRideInfo.id);
+              }}
+              style={{
+                background: 'transparent',
+                border: 'none',
+                color: '#991B1B',
+                cursor: 'pointer',
+                padding: '0.35rem',
+                display: 'flex',
+                alignItems: 'center'
+              }}
+              aria-label="Dismiss alert"
+            >
+              <X size={18} />
+            </button>
+          </div>
+        </div>
+      )}
+
+      {message && !noDriverAlert && (
         <div className="portal-alert alert-success">
           <CheckCircle2 size={18} />
           <span>{message}</span>
