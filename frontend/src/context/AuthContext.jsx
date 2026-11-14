@@ -1,5 +1,6 @@
 import React, { createContext, useContext, useState, useEffect } from 'react';
 import apiClient from '../api/client';
+import { disconnectSocket } from '../services/socket';
 
 export const KNOWN_DRIVERS = [
   { id: 'driver-seed-1', name: 'Rajesh Prajapati', email: 'driver@rideflow.io', vehicle: 'Toyota Prius (White)', plate: 'GJ-01-AB-1234', location: 'SG Highway (Iscon)' },
@@ -53,6 +54,7 @@ export const AuthProvider = ({ children }) => {
   }, []);
 
   const login = async (email, password) => {
+    disconnectSocket();
     const response = await apiClient.post('/auth/login', { email, password });
     if (response.data.success) {
       const { token: receivedToken, user: receivedUser } = response.data;
@@ -66,6 +68,7 @@ export const AuthProvider = ({ children }) => {
   };
 
   const register = async (userData) => {
+    disconnectSocket();
     const response = await apiClient.post('/auth/register', userData);
     if (response.data.success) {
       const { token: receivedToken, user: receivedUser } = response.data;
@@ -79,6 +82,7 @@ export const AuthProvider = ({ children }) => {
   };
 
   const logout = () => {
+    disconnectSocket();
     localStorage.removeItem('rideflow_token');
     localStorage.removeItem('rideflow_user');
     setToken(null);

@@ -8,7 +8,7 @@ let socket = null;
  * Get or initialize active Socket.IO connection
  */
 export function getSocket(token) {
-  const authToken = token || localStorage.getItem('token');
+  const authToken = token || localStorage.getItem('rideflow_token') || localStorage.getItem('token');
 
   if (!socket && authToken) {
     socket = io(GATEWAY_URL, {

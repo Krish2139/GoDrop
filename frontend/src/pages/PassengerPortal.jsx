@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { useAuth } from '../context/AuthContext';
 import apiClient from '../api/client';
 import { 
@@ -124,20 +124,22 @@ const PassengerPortal = () => {
         setRides(allRides);
 
         // Identify current active ride (not COMPLETED or CANCELLED)
+        const myPassId = profRes.data?.data?.id;
         const currentActive = allRides.find(
-          r => !['COMPLETED', 'CANCELLED'].includes(r.status)
+          r => (myPassId ? r.passenger_id === myPassId : true) && !['COMPLETED', 'CANCELLED'].includes(r.status)
         );
         setActiveRide(currentActive || null);
 
         // Check if most recent ride was auto-cancelled due to NO_DRIVERS
-        if (allRides.length > 0 && allRides[0].status === 'CANCELLED' && (allRides[0].cancellation_reason?.includes('NO_DRIVERS') || allRides[0].cancellation_reason?.includes('DRIVERS_BUSY'))) {
-          const cancelKey = `notified_no_driver_${allRides[0].id}`;
-          if (!sessionStorage.getItem(cancelKey)) {
-            sessionStorage.setItem(cancelKey, 'true');
+        const cancelledNoDrivers = allRides.find(
+          r => r.status === 'CANCELLED' && (r.cancellation_reason?.includes('NO_DRIVERS') || r.cancellation_reason?.includes('DRIVERS_BUSY'))
+        );
+        if (cancelledNoDrivers) {
+          setCancelledRideInfo(cancelledNoDrivers);
+          if (dismissedModalRideId !== cancelledNoDrivers.id) {
             setShowNoDriverModal(true);
-            setCancelledRideInfo(allRides[0]);
             setNoDriverReason('No drivers available at this moment. All nearby drivers have declined the ride request. Your ride request has been automatically cancelled.');
-            setMessage('Ride request automatically cancelled: No drivers were available to accept.');
+            setMessage('Ride request automatically cancelled: No drivers available.');
           }
         }
       }
@@ -160,19 +162,20 @@ const PassengerPortal = () => {
           const allRides = ridesRes.data.data || [];
           setRides(allRides);
           const currentActive = allRides.find(
-            r => !['COMPLETED', 'CANCELLED'].includes(r.status)
+            r => (profile?.id ? r.passenger_id === profile.id : true) && !['COMPLETED', 'CANCELLED'].includes(r.status)
           );
           setActiveRide(currentActive || null);
 
-          // Check if most recent ride was auto-cancelled due to NO_DRIVERS
-          if (allRides.length > 0 && allRides[0].status === 'CANCELLED' && (allRides[0].cancellation_reason?.includes('NO_DRIVERS') || allRides[0].cancellation_reason?.includes('DRIVERS_BUSY'))) {
-            const cancelKey = `notified_no_driver_${allRides[0].id}`;
-            if (!sessionStorage.getItem(cancelKey)) {
-              sessionStorage.setItem(cancelKey, 'true');
+          // Check if ride was auto-cancelled due to NO_DRIVERS
+          const cancelledNoDrivers = allRides.find(
+            r => r.status === 'CANCELLED' && (r.cancellation_reason?.includes('NO_DRIVERS') || r.cancellation_reason?.includes('DRIVERS_BUSY'))
+          );
+          if (cancelledNoDrivers) {
+            setCancelledRideInfo(cancelledNoDrivers);
+            if (dismissedModalRideId !== cancelledNoDrivers.id) {
               setShowNoDriverModal(true);
-              setCancelledRideInfo(allRides[0]);
               setNoDriverReason('No drivers available at this moment. All nearby drivers have declined the ride request. Your ride request has been automatically cancelled.');
-              setMessage('Ride request automatically cancelled: No drivers were available to accept.');
+              setMessage('Ride request automatically cancelled: No drivers available.');
             }
           }
         }
@@ -180,7 +183,7 @@ const PassengerPortal = () => {
     }, 2500);
 
     return () => clearInterval(pollInterval);
-  }, []);
+  }, [profile?.id]);
 
   // Socket.IO Real-time Channels integration
   useEffect(() => {
@@ -195,9 +198,10 @@ const PassengerPortal = () => {
       const unsubStatus = onRideStatusChanged((data) => {
         if (data) {
           console.log('⚡ Realtime ride status received via Socket.IO:', data.status);
-          if (data.noDriversAvailable) {
+          if (data.noDriversAvailable || (data.status === 'CANCELLED' && data.cancellation_reason?.includes('NO_DRIVERS'))) {
             setShowNoDriverModal(true);
             if (data.message) setNoDriverReason(data.message);
+            if (data.ride) setCancelledRideInfo(data.ride);
           }
           loadData();
         }
@@ -207,6 +211,7 @@ const PassengerPortal = () => {
         console.warn('⚠️ No drivers available event received:', data);
         setShowNoDriverModal(true);
         if (data?.message) setNoDriverReason(data.message);
+        if (data?.ride) setCancelledRideInfo(data.ride);
         loadData();
       });
 
@@ -265,6 +270,9 @@ const PassengerPortal = () => {
     setBookingLoading(true);
     setError(null);
     setMessage(null);
+    setDismissedModalRideId(null);
+    setCancelledRideInfo(null);
+    setShowNoDriverModal(false);
 
     try {
       const payload = {
@@ -355,8 +363,9 @@ const PassengerPortal = () => {
   // Dismiss No Driver Modal
   const handleCloseModal = () => {
     setShowNoDriverModal(false);
-    if (activeRide?.id) {
-      setDismissedModalRideId(activeRide.id);
+    const rideIdToDismiss = activeRide?.id || cancelledRideInfo?.id;
+    if (rideIdToDismiss) {
+      setDismissedModalRideId(rideIdToDismiss);
     }
   };
 
@@ -840,6 +849,38 @@ const PassengerPortal = () => {
             </div>
           ) : (
             <div className="no-active-ride">
+              {cancelledRideInfo && (cancelledRideInfo.cancellation_reason?.includes('NO_DRIVERS') || cancelledRideInfo.cancellation_reason?.includes('DRIVERS_BUSY')) && (
+                <div style={{
+                  width: '100%',
+                  background: '#FEF2F2',
+                  border: '1px solid #FECACA',
+                  borderRadius: '12px',
+                  padding: '1.1rem 1.25rem',
+                  marginBottom: '1.25rem',
+                  textAlign: 'left',
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: '1rem',
+                  boxShadow: '0 4px 6px -1px rgba(220, 38, 38, 0.1)'
+                }}>
+                  <AlertTriangle size={28} style={{ color: '#DC2626', flexShrink: 0 }} />
+                  <div style={{ flex: 1 }}>
+                    <b style={{ color: '#991B1B', fontSize: '1rem', display: 'block', marginBottom: '0.2rem' }}>
+                      No Driver Available At This Moment
+                    </b>
+                    <span style={{ color: '#7F1D1D', fontSize: '0.88rem', lineHeight: 1.4 }}>
+                      All nearby drivers have declined the ride request. Your ride request has been automatically cancelled.
+                    </span>
+                  </div>
+                  <button 
+                    onClick={() => setShowNoDriverModal(true)}
+                    className="btn btn-sm btn-outline"
+                    style={{ background: '#ffffff', borderColor: '#DC2626', color: '#DC2626', fontWeight: 700, flexShrink: 0, padding: '0.45rem 0.85rem' }}
+                  >
+                    View Popup Modal
+                  </button>
+                </div>
+              )}
               <Car size={32} className="no-ride-icon" />
               <p>No active ride in progress.</p>
               <span className="subtext">Use the booking form below to request a ride.</span>
