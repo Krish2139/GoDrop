@@ -55,83 +55,65 @@ const PassengerPortal = () => {
   const [liveDriverLocation, setLiveDriverLocation] = useState(null);
   const [socketConnected, setSocketConnected] = useState(false);
 
-  // No Drivers Available State (Stays on screen for 1 minute in red)
-  const [noDriverAlert, setNoDriverAlert] = useState(null);
-  const [alertCountdown, setAlertCountdown] = useState(60);
-  const [dismissedAlertRideId, setDismissedAlertRideId] = useState(null);
+  // Tracking refs to eliminate spamming and guarantee clean dismissal
+  const activeRideRef = useRef(null);
+  const notifiedRidesRef = useRef(new Set());
+  const timerRef = useRef(null);
+
+  // No Drivers Available State (Stays on screen for 1 minute in red unless dismissed)
+  const [noDriverAlert, setNoDriverAlert] = useState(false);
   const [showNoDriverModal, setShowNoDriverModal] = useState(false);
+  const [alertCountdown, setAlertCountdown] = useState(60);
+  const [cancelledRideInfo, setCancelledRideInfo] = useState(null);
   const [noDriverReason, setNoDriverReason] = useState('All nearby drivers have declined or are currently busy. Your ride request has been automatically cancelled.');
   const [retryingDispatch, setRetryingDispatch] = useState(false);
-  const [dismissedModalRideId, setDismissedModalRideId] = useState(null);
-  const [cancelledRideInfo, setCancelledRideInfo] = useState(null);
-  const [modalCountdown, setModalCountdown] = useState(60);
 
-  const triggerNoDriverAlert = (rideInfo) => {
-    setNoDriverAlert(rideInfo || true);
-    setAlertCountdown(60);
-    setShowNoDriverModal(true);
-    setModalCountdown(60);
-    setMessage(null);
-    if (rideInfo) {
-      setCancelledRideInfo(rideInfo);
+  // Clean, definitive dismissal handler for both Modal and Banner
+  const dismissAllNoDriverAlerts = () => {
+    setShowNoDriverModal(false);
+    setNoDriverAlert(false);
+    if (timerRef.current) {
+      clearInterval(timerRef.current);
+      timerRef.current = null;
+    }
+    const rId = activeRide?.id || cancelledRideInfo?.id || activeRideRef.current;
+    if (rId) {
+      notifiedRidesRef.current.add(rId);
     }
   };
 
-  // Keep No Driver Red Alert visible on screen for 1 minute (60 seconds) with countdown
-  useEffect(() => {
-    let timer;
-    if (noDriverAlert) {
-      setAlertCountdown(60);
-      timer = setInterval(() => {
-        setAlertCountdown(prev => {
-          if (prev <= 1) {
-            clearInterval(timer);
-            setNoDriverAlert(null);
-            setShowNoDriverModal(false);
-            if (cancelledRideInfo?.id) {
-              setDismissedAlertRideId(cancelledRideInfo.id);
-              setDismissedModalRideId(cancelledRideInfo.id);
-            }
-            return 0;
-          }
-          return prev - 1;
-        });
-      }, 1000);
+  const triggerNoDriverAlert = (rideInfo) => {
+    const rId = rideInfo?.id || rideInfo?.rideId;
+    if (rId) {
+      notifiedRidesRef.current.add(rId);
     }
-    return () => clearInterval(timer);
-  }, [noDriverAlert, cancelledRideInfo?.id]);
+    setCancelledRideInfo(rideInfo);
+    setNoDriverAlert(true);
+    setShowNoDriverModal(true);
+    setAlertCountdown(60);
+    setMessage(null);
 
-  // Keep No Driver Modal in sync for 1 minute (60 seconds) with live countdown & auto-dismiss
-  useEffect(() => {
-    let timer;
-    if (showNoDriverModal) {
-      setModalCountdown(60);
-      timer = setInterval(() => {
-        setModalCountdown(prev => {
-          if (prev <= 1) {
-            clearInterval(timer);
-            setShowNoDriverModal(false);
-            setNoDriverAlert(null);
-            const rideIdToDismiss = activeRide?.id || cancelledRideInfo?.id;
-            if (rideIdToDismiss) {
-              setDismissedModalRideId(rideIdToDismiss);
-              setDismissedAlertRideId(rideIdToDismiss);
-            }
-            return 0;
-          }
-          return prev - 1;
-        });
-      }, 1000);
-    }
-    return () => clearInterval(timer);
-  }, [showNoDriverModal, activeRide?.id, cancelledRideInfo?.id]);
+    if (timerRef.current) clearInterval(timerRef.current);
+    timerRef.current = setInterval(() => {
+      setAlertCountdown(prev => {
+        if (prev <= 1) {
+          clearInterval(timerRef.current);
+          timerRef.current = null;
+          setShowNoDriverModal(false);
+          setNoDriverAlert(false);
+          return 0;
+        }
+        return prev - 1;
+      });
+    }, 1000);
+  };
 
-  // Automatically pop up modal when active ride is in PENDING state (No driver available)
+  // Cleanup countdown timer on component unmount
   useEffect(() => {
-    if (activeRide && activeRide.status === 'PENDING' && dismissedModalRideId !== activeRide.id) {
-      setShowNoDriverModal(true);
-    }
-  }, [activeRide?.id, activeRide?.status, dismissedModalRideId]);
+    return () => {
+      if (timerRef.current) clearInterval(timerRef.current);
+    };
+  }, []);
 
   // Manual Passenger Management State
   const [showAddPassenger, setShowAddPassenger] = useState(false);
@@ -193,16 +175,8 @@ const PassengerPortal = () => {
           r => (myPassId ? r.passenger_id === myPassId : true) && !['COMPLETED', 'CANCELLED'].includes(r.status)
         );
         setActiveRide(currentActive || null);
-
-        // Check if most recent ride was auto-cancelled due to NO_DRIVERS
-        const cancelledNoDrivers = allRides.find(
-          r => r.status === 'CANCELLED' && (r.cancellation_reason?.includes('NO_DRIVERS') || r.cancellation_reason?.includes('DRIVERS_BUSY'))
-        );
-        if (cancelledNoDrivers) {
-          setCancelledRideInfo(cancelledNoDrivers);
-          if (dismissedAlertRideId !== cancelledNoDrivers.id) {
-            triggerNoDriverAlert(cancelledNoDrivers);
-          }
+        if (currentActive) {
+          activeRideRef.current = currentActive.id;
         }
       }
     } catch (err) {
@@ -228,14 +202,17 @@ const PassengerPortal = () => {
           );
           setActiveRide(currentActive || null);
 
-          // Check if ride was auto-cancelled due to NO_DRIVERS
-          const cancelledNoDrivers = allRides.find(
-            r => r.status === 'CANCELLED' && (r.cancellation_reason?.includes('NO_DRIVERS') || r.cancellation_reason?.includes('DRIVERS_BUSY'))
-          );
-          if (cancelledNoDrivers) {
-            setCancelledRideInfo(cancelledNoDrivers);
-            if (dismissedAlertRideId !== cancelledNoDrivers.id) {
-              triggerNoDriverAlert(cancelledNoDrivers);
+          // ONLY notify if the ride we were ACTIVELY tracking was cancelled due to no drivers
+          if (activeRideRef.current) {
+            const tracked = allRides.find(r => r.id === activeRideRef.current);
+            if (tracked && tracked.status === 'CANCELLED') {
+              if (tracked.cancellation_reason?.includes('NO_DRIVERS') || tracked.cancellation_reason?.includes('DRIVERS_BUSY')) {
+                if (!notifiedRidesRef.current.has(tracked.id)) {
+                  notifiedRidesRef.current.add(tracked.id);
+                  triggerNoDriverAlert(tracked);
+                }
+              }
+              activeRideRef.current = null;
             }
           }
         }
@@ -243,7 +220,7 @@ const PassengerPortal = () => {
     }, 2500);
 
     return () => clearInterval(pollInterval);
-  }, [profile?.id, dismissedAlertRideId]);
+  }, [profile?.id]);
 
   // Socket.IO Real-time Channels integration
   useEffect(() => {
@@ -258,8 +235,12 @@ const PassengerPortal = () => {
       const unsubStatus = onRideStatusChanged((data) => {
         if (data) {
           console.log('⚡ Realtime ride status received via Socket.IO:', data.status);
+          const rId = data.rideId || data.ride?.id;
           if (data.noDriversAvailable || (data.status === 'CANCELLED' && data.cancellation_reason?.includes('NO_DRIVERS'))) {
-            triggerNoDriverAlert(data.ride || { id: data.rideId });
+            if (rId && !notifiedRidesRef.current.has(rId)) {
+              notifiedRidesRef.current.add(rId);
+              triggerNoDriverAlert(data.ride || { id: rId });
+            }
           }
           loadData();
         }
@@ -267,7 +248,11 @@ const PassengerPortal = () => {
 
       const unsubNoDrivers = onNoDriversAvailable((data) => {
         console.warn('⚠️ No drivers available event received:', data);
-        triggerNoDriverAlert(data?.ride || { id: data?.rideId });
+        const rId = data?.rideId || data?.ride?.id;
+        if (rId && !notifiedRidesRef.current.has(rId)) {
+          notifiedRidesRef.current.add(rId);
+          triggerNoDriverAlert(data?.ride || { id: rId });
+        }
         loadData();
       });
 
@@ -406,7 +391,8 @@ const PassengerPortal = () => {
       if (res.data.success) {
         setMessage('Ride has been cancelled.');
         setActiveRide(null);
-        setShowNoDriverModal(false);
+        activeRideRef.current = null;
+        dismissAllNoDriverAlerts();
         await loadData();
       }
     } catch (err) {
@@ -416,11 +402,7 @@ const PassengerPortal = () => {
 
   // Dismiss No Driver Modal
   const handleCloseModal = () => {
-    setShowNoDriverModal(false);
-    const rideIdToDismiss = activeRide?.id || cancelledRideInfo?.id;
-    if (rideIdToDismiss) {
-      setDismissedModalRideId(rideIdToDismiss);
-    }
+    dismissAllNoDriverAlerts();
   };
 
   // Retry Auto-Dispatch when no drivers are available
@@ -506,7 +488,7 @@ const PassengerPortal = () => {
           }}>
             {/* Close 'X' Button */}
             <button 
-              onClick={handleCloseModal}
+              onClick={dismissAllNoDriverAlerts}
               style={{
                 position: 'absolute',
                 top: '1rem',
@@ -552,7 +534,7 @@ const PassengerPortal = () => {
               fontWeight: 700,
               marginBottom: '0.75rem'
             }}>
-              <Clock size={15} /> Showing on screen: {modalCountdown}s remaining (1 min)
+              <Clock size={15} /> Showing on screen: {alertCountdown}s remaining (1 min)
             </div>
 
             {/* Progress Bar (60s countdown) */}
@@ -565,9 +547,9 @@ const PassengerPortal = () => {
               marginBottom: '1.25rem'
             }}>
               <div style={{
-                width: `${(modalCountdown / 60) * 100}%`,
+                width: `${(alertCountdown / 60) * 100}%`,
                 height: '100%',
-                background: modalCountdown > 15 ? '#DC2626' : '#EF4444',
+                background: alertCountdown > 15 ? '#DC2626' : '#EF4444',
                 transition: 'width 1s linear'
               }} />
             </div>
@@ -608,7 +590,7 @@ const PassengerPortal = () => {
             <div style={{ display: 'flex', flexDirection: 'column', gap: '0.65rem' }}>
               <button 
                 onClick={() => {
-                  handleCloseModal();
+                  dismissAllNoDriverAlerts();
                   document.querySelector('.booking-card')?.scrollIntoView({ behavior: 'smooth' });
                 }}
                 className="btn btn-primary"
@@ -618,7 +600,7 @@ const PassengerPortal = () => {
               </button>
 
               <button 
-                onClick={handleCloseModal}
+                onClick={dismissAllNoDriverAlerts}
                 className="btn btn-outline"
                 style={{ width: '100%', padding: '0.75rem', justifyContent: 'center' }}
               >
@@ -701,7 +683,7 @@ const PassengerPortal = () => {
           <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', flexShrink: 0 }}>
             <button
               onClick={() => {
-                setNoDriverAlert(null);
+                dismissAllNoDriverAlerts();
                 document.querySelector('.booking-card')?.scrollIntoView({ behavior: 'smooth' });
               }}
               className="btn btn-sm btn-primary"
@@ -710,10 +692,7 @@ const PassengerPortal = () => {
               <Car size={14} /> Book Another Ride
             </button>
             <button
-              onClick={() => {
-                setNoDriverAlert(null);
-                if (cancelledRideInfo?.id) setDismissedAlertRideId(cancelledRideInfo.id);
-              }}
+              onClick={dismissAllNoDriverAlerts}
               style={{
                 background: 'transparent',
                 border: 'none',
@@ -1024,7 +1003,7 @@ const PassengerPortal = () => {
             </div>
           ) : (
             <div className="no-active-ride">
-              {cancelledRideInfo && (cancelledRideInfo.cancellation_reason?.includes('NO_DRIVERS') || cancelledRideInfo.cancellation_reason?.includes('DRIVERS_BUSY')) && (
+              {noDriverAlert && cancelledRideInfo && (
                 <div style={{
                   width: '100%',
                   background: '#FEF2F2',
