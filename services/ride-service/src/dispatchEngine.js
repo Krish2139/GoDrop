@@ -454,6 +454,7 @@ export async function acceptOffer(rideId, driverId) {
         [rideId, driverId]
       );
 
+      let assignmentId = null;
       if (asgnRes.rows.length === 0) {
         // Fallback: check if the ride is currently in DRIVER_ASSIGNED for this driver
         const rideCheck = await client.query(
@@ -466,6 +467,7 @@ export async function acceptOffer(rideId, driverId) {
         }
       } else {
         const asgn = asgnRes.rows[0];
+        assignmentId = asgn.id;
         // 2. Mark assignment ACCEPTED
         await client.query(
           `UPDATE ride_assignments SET status = 'ACCEPTED', responded_at = NOW() WHERE id = $1`,
@@ -484,6 +486,7 @@ export async function acceptOffer(rideId, driverId) {
         `UPDATE rides SET status = 'DRIVER_ACCEPTED', updated_at = NOW() WHERE id = $1 RETURNING *`,
         [rideId]
       );
+      const updatedRide = rideRes.rows[0];
 
       // 5. Outbox Event
       await client.query(
@@ -492,7 +495,7 @@ export async function acceptOffer(rideId, driverId) {
         [
           `outbox-${Date.now()}-${Math.random().toString(36).substring(2, 6)}`,
           rideId,
-          JSON.stringify({ rideId, driverId, assignmentId: asgn.id, status: 'DRIVER_ACCEPTED' })
+          JSON.stringify({ rideId, driverId, assignmentId, status: 'DRIVER_ACCEPTED' })
         ]
       );
 
@@ -500,35 +503,28 @@ export async function acceptOffer(rideId, driverId) {
       await invalidateRide(rideId);
 
       // Realtime Push Stream to Driver & Ride Rooms
-      publishRealtimeEvent(`driver:${selectedDriver.user_id || selectedDriver.id}`, 'dispatch:offer', {
-        assignmentId,
-        rideId,
-        pickupAddress: ride.pickup_address,
-        pickupLat: ride.pickup_latitude,
-        pickupLng: ride.pickup_longitude,
-        destinationAddress: ride.destination_address,
-        distanceKm: selectedDriver.distance_km,
-        fare: ride.fare_amount || ride.fare,
-        expiresAt: expiresAt.toISOString(),
-        remainingSeconds: OFFER_TIMEOUT_SECONDS,
-      });
-
       publishRealtimeEvent(`ride:${rideId}`, 'ride:status:changed', {
         rideId,
-        status: 'DRIVER_ASSIGNED',
+        status: 'DRIVER_ACCEPTED',
         ride: updatedRide,
       });
 
-      if (ride.passenger_id) {
-        publishRealtimeEvent(`user:${ride.passenger_id}`, 'ride:status:changed', {
+      if (updatedRide.passenger_id) {
+        publishRealtimeEvent(`user:${updatedRide.passenger_id}`, 'ride:status:changed', {
           rideId,
-          status: 'DRIVER_ASSIGNED',
+          status: 'DRIVER_ACCEPTED',
           ride: updatedRide,
         });
       }
 
+      publishRealtimeEvent(`driver:${driverId}`, 'ride:status:changed', {
+        rideId,
+        status: 'DRIVER_ACCEPTED',
+        ride: updatedRide,
+      });
+
       logger.info({ rideId, driverId }, 'Driver successfully accepted offer');
-      return { success: true, status: 'DRIVER_ACCEPTED', ride: rideRes.rows[0] };
+      return { success: true, status: 'DRIVER_ACCEPTED', ride: updatedRide };
     } catch (err) {
       if (client) await client.query('ROLLBACK');
       logger.error(err, 'PostgreSQL error accepting offer');

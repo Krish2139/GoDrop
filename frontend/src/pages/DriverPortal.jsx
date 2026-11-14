@@ -342,12 +342,15 @@ const DriverPortal = () => {
     setActionLoading(true);
     setError(null);
     try {
+      const targetDriverId = driver?.id || activeRide?.driver_id || 'driver-seed-1';
       const res = await apiClient.post(`/rides/${rideId}/accept`, {
-        driver_id: driver?.id || 'driver-seed-1',
+        driver_id: targetDriverId,
       });
-      if (res.data.success) {
+      if (res.data.success || res.data.status === 'DRIVER_ACCEPTED') {
         setMessage('Ride offer accepted! Proceed to pickup location.');
         await loadDriverData();
+      } else {
+        setError(res.data.message || 'Failed to accept ride');
       }
     } catch (err) {
       setError(err.response?.data?.message || 'Failed to accept ride');
