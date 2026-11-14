@@ -59,6 +59,14 @@ const PassengerPortal = () => {
   const [showNoDriverModal, setShowNoDriverModal] = useState(false);
   const [noDriverReason, setNoDriverReason] = useState('All nearby drivers have declined or are currently busy.');
   const [retryingDispatch, setRetryingDispatch] = useState(false);
+  const [dismissedModalRideId, setDismissedModalRideId] = useState(null);
+
+  // Automatically pop up modal when active ride is in PENDING state (No driver available)
+  useEffect(() => {
+    if (activeRide && activeRide.status === 'PENDING' && dismissedModalRideId !== activeRide.id) {
+      setShowNoDriverModal(true);
+    }
+  }, [activeRide?.id, activeRide?.status, dismissedModalRideId]);
 
   // Manual Passenger Management State
   const [showAddPassenger, setShowAddPassenger] = useState(false);
@@ -319,11 +327,20 @@ const PassengerPortal = () => {
     }
   };
 
+  // Dismiss No Driver Modal
+  const handleCloseModal = () => {
+    setShowNoDriverModal(false);
+    if (activeRide?.id) {
+      setDismissedModalRideId(activeRide.id);
+    }
+  };
+
   // Retry Auto-Dispatch when no drivers are available
   const handleRetryDispatch = async () => {
     if (!activeRide) return;
     setRetryingDispatch(true);
     setError(null);
+    setDismissedModalRideId(null);
     try {
       const res = await apiClient.post(`/rides/${activeRide.id}/dispatch`);
       if (res.data?.dispatched) {
@@ -331,6 +348,7 @@ const PassengerPortal = () => {
         setMessage(`Driver matched! Nearest driver ${res.data.driver?.name || 'Driver'} assigned.`);
         await loadData();
       } else {
+        setShowNoDriverModal(true);
         setMessage('Still no available drivers nearby. Please try again in a few moments or cancel.');
       }
     } catch (err) {
@@ -358,7 +376,16 @@ const PassengerPortal = () => {
       case 'DRIVER_ACCEPTED': return <span className="badge badge-info">DRIVER ACCEPTED</span>;
       case 'DRIVER_ARRIVED': return <span className="badge badge-info">DRIVER ARRIVED</span>;
       case 'REQUESTED': return <span className="badge badge-warning">REQUESTED</span>;
-      case 'PENDING': return <span className="badge badge-warning">SEARCHING DRIVER</span>;
+      case 'PENDING': return (
+        <span 
+          className="badge" 
+          onClick={() => setShowNoDriverModal(true)}
+          style={{ cursor: 'pointer', background: '#FEF2F2', color: '#DC2626', border: '1px solid #FCA5A5', fontWeight: 700 }}
+          title="Click to view details"
+        >
+          ⚠️ NO DRIVERS AVAILABLE
+        </span>
+      );
       default: return <span className="badge badge-neutral">{status}</span>;
     }
   };
@@ -391,7 +418,7 @@ const PassengerPortal = () => {
           }}>
             {/* Close 'X' Button */}
             <button 
-              onClick={() => setShowNoDriverModal(false)}
+              onClick={handleCloseModal}
               style={{
                 position: 'absolute',
                 top: '1rem',
@@ -756,14 +783,23 @@ const PassengerPortal = () => {
                     <b style={{ display: 'block', fontSize: '0.9rem', marginBottom: '0.15rem' }}>No Driver Available At This Moment</b>
                     <span>All nearby drivers declined or timed out. You can retry dispatch or cancel.</span>
                   </div>
-                  <button 
-                    onClick={handleRetryDispatch}
-                    disabled={retryingDispatch}
-                    className="btn btn-sm btn-primary"
-                    style={{ padding: '0.35rem 0.65rem', fontSize: '0.8rem', whiteSpace: 'nowrap' }}
-                  >
-                    <RefreshCw size={13} className={retryingDispatch ? 'spin' : ''} /> Retry
-                  </button>
+                  <div style={{ display: 'flex', gap: '0.4rem' }}>
+                    <button 
+                      onClick={() => setShowNoDriverModal(true)}
+                      className="btn btn-sm btn-outline"
+                      style={{ padding: '0.35rem 0.65rem', fontSize: '0.8rem', background: '#fff' }}
+                    >
+                      View Details
+                    </button>
+                    <button 
+                      onClick={handleRetryDispatch}
+                      disabled={retryingDispatch}
+                      className="btn btn-sm btn-primary"
+                      style={{ padding: '0.35rem 0.65rem', fontSize: '0.8rem', whiteSpace: 'nowrap' }}
+                    >
+                      <RefreshCw size={13} className={retryingDispatch ? 'spin' : ''} /> Retry
+                    </button>
+                  </div>
                 </div>
               )}
 
