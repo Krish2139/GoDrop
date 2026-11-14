@@ -2,9 +2,18 @@ import amqp from 'amqplib';
 import dotenv from 'dotenv';
 import { logger } from './logger.js';
 import { pool, query } from './db.js';
-import { dispatchRide } from '../../../services/ride-service/src/dispatchEngine.js';
 
 dotenv.config();
+
+const RIDE_SERVICE_URL = process.env.RIDE_SERVICE_URL || 'http://ride-service:5001';
+
+async function dispatchRide(rideId) {
+  const res = await fetch(`${RIDE_SERVICE_URL}/api/v1/rides/${rideId}/dispatch`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+  });
+  return await res.json();
+}
 
 const RABBITMQ_HOST = process.env.RABBITMQ_HOST || 'localhost';
 const RABBITMQ_PORT = process.env.RABBITMQ_PORT || 5672;

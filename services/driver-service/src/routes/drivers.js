@@ -336,15 +336,37 @@ router.post('/', async (req, res) => {
 
 // GET /api/v1/drivers/profile - Current driver profile
 router.get('/profile', async (req, res) => {
-  const userId = req.query.user_id;
+  let userId = req.query.user_id || req.headers['x-user-id'];
+
+  // Fallback: parse user ID directly from JWT bearer token if present
+  if (!userId && req.headers.authorization) {
+    try {
+      const parts = req.headers.authorization.split(' ');
+      if (parts.length === 2 && parts[1].includes('.')) {
+        const payload = JSON.parse(Buffer.from(parts[1].split('.')[1], 'base64').toString());
+        if (payload && payload.id) userId = payload.id;
+      }
+    } catch (e) {}
+  }
 
   if (isDbConnected()) {
     try {
       let result;
       if (userId) {
-        result = await query('SELECT * FROM drivers WHERE user_id = $1 LIMIT 1', [userId]);
+        result = await query(
+          `SELECT d.*, u.name, u.email, u.phone 
+           FROM drivers d 
+           JOIN users u ON d.user_id = u.id 
+           WHERE d.user_id = $1 LIMIT 1`, 
+          [userId]
+        );
       } else {
-        result = await query('SELECT * FROM drivers ORDER BY created_at ASC LIMIT 1');
+        result = await query(
+          `SELECT d.*, u.name, u.email, u.phone 
+           FROM drivers d 
+           JOIN users u ON d.user_id = u.id 
+           ORDER BY d.created_at ASC LIMIT 1`
+        );
       }
 
       if (result.rows.length > 0) {
@@ -514,7 +536,7 @@ router.get('/:id/offers', async (req, res) => {
          JOIN rides r ON a.ride_id = r.id
          LEFT JOIN passengers p ON r.passenger_id = p.id
          LEFT JOIN users u ON p.user_id = u.id
-         WHERE a.driver_id = $1 AND a.status = 'OFFERED' AND a.expires_at > NOW()
+         WHERE a.driver_id = $1 AND a.status = 'OFFERED' AND (a.expires_at > NOW() OR r.status = 'DRIVER_ASSIGNED')
          ORDER BY a.offered_at DESC`,
         [req.params.id]
       );

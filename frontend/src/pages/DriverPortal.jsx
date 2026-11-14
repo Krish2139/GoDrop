@@ -68,9 +68,9 @@ const DriverPortal = () => {
     setActionLoading(true);
     setError(null);
     try {
-      await switchDriver(email);
-      setMessage(`Switched terminal to driver: ${email}`);
-      await loadDriverData();
+      const loggedInUser = await switchDriver(email);
+      setMessage(`Switched terminal to driver: ${loggedInUser.name} (${email})`);
+      await loadDriverData(loggedInUser);
     } catch (err) {
       setError(err.message || 'Failed to switch driver account');
     } finally {
@@ -83,7 +83,7 @@ const DriverPortal = () => {
     try {
       setActionLoading(true);
       setError(null);
-      await register({
+      const registeredUser = await register({
         name: newDrvName,
         email: newDrvEmail,
         password: newDrvPassword,
@@ -97,7 +97,7 @@ const DriverPortal = () => {
       setShowAddDriver(false);
       setNewDrvName('');
       setNewDrvEmail('');
-      await loadDriverData();
+      await loadDriverData(registeredUser);
     } catch (err) {
       setError(err.response?.data?.message || err.message || 'Failed to register driver');
     } finally {
@@ -105,38 +105,53 @@ const DriverPortal = () => {
     }
   };
 
-  const loadDriverData = async () => {
+  const loadDriverData = async (userOverride = null) => {
+    const activeUser = userOverride || user;
     try {
       setLoading(true);
       setError(null);
 
-      // Fetch driver profile
-      const profRes = await apiClient.get('/drivers/profile');
-      if (profRes.data.success) {
+      // Fetch driver profile explicitly passing user ID
+      const profRes = await apiClient.get('/drivers/profile', {
+        params: activeUser?.id ? { user_id: activeUser.id } : {}
+      });
+      if (profRes.data.success && profRes.data.data) {
         const d = profRes.data.data;
         setDriver(d);
         setSimLat(d.current_latitude);
         setSimLng(d.current_longitude);
         setSimHeading(d.heading || 0);
 
-        // Fetch driver offers
+        // Fetch driver offers specifically for this driver
         const offersRes = await apiClient.get(`/drivers/${d.id}/offers`);
-        if (offersRes.data.success) {
-          setOffers(offersRes.data.data || []);
+        const driverOffers = (offersRes.data.success && offersRes.data.data) ? offersRes.data.data : [];
+        setOffers(driverOffers);
+
+        // Fetch rides
+        const ridesRes = await apiClient.get('/rides');
+        if (ridesRes.data.success) {
+          const allRides = ridesRes.data.data || [];
+          setRides(allRides);
+
+          // Check if there is an active ride assigned/in-progress for THIS specific driver
+          const myActive = allRides.find(
+            r => r.driver_id === d.id && ['DRIVER_ASSIGNED', 'DRIVER_ACCEPTED', 'DRIVER_ARRIVED', 'IN_PROGRESS'].includes(r.status)
+          );
+          setActiveRide(myActive || null);
+
+          // If there is an active ride in DRIVER_ASSIGNED, but offers list is empty, synthesize offer
+          if (myActive && myActive.status === 'DRIVER_ASSIGNED' && driverOffers.length === 0) {
+            setActiveOffer({
+              ride_id: myActive.id,
+              pickup_address: myActive.pickup_address,
+              destination_address: myActive.destination_address,
+              fare_amount: myActive.fare_amount,
+              distance_km: myActive.distance_km,
+              remaining_seconds: 180,
+            });
+            setCountdown(180);
+          }
         }
-      }
-
-      // Fetch rides
-      const ridesRes = await apiClient.get('/rides');
-      if (ridesRes.data.success) {
-        const allRides = ridesRes.data.data || [];
-        setRides(allRides);
-
-        // Check if there is an active ride assigned/in-progress for this driver
-        const active = allRides.find(
-          r => ['DRIVER_ASSIGNED', 'DRIVER_ACCEPTED', 'DRIVER_ARRIVED', 'IN_PROGRESS'].includes(r.status)
-        );
-        setActiveRide(active || null);
       }
     } catch (err) {
       setError(err.response?.data?.message || 'Error loading driver profile');
@@ -147,7 +162,7 @@ const DriverPortal = () => {
 
   useEffect(() => {
     loadDriverData();
-  }, []);
+  }, [user?.id]);
 
   // Sync active offer & countdown
   useEffect(() => {

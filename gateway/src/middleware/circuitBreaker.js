@@ -247,6 +247,8 @@ export function createBreakerProxy(breaker, targetBaseUrl) {
           'x-request-id': req.id,
           'content-type': 'application/json',
           ...(req.headers.authorization ? { authorization: req.headers.authorization } : {}),
+          ...(req.headers['x-user-id'] ? { 'x-user-id': req.headers['x-user-id'] } : {}),
+          ...(req.headers['x-user-role'] ? { 'x-user-role': req.headers['x-user-role'] } : {}),
         },
       });
 

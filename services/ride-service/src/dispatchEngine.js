@@ -12,7 +12,7 @@ async function invalidateRide(rideId) {
 }
 
 export const MAX_DISPATCH_RADIUS_KM = 25.0; // Ahmedabad Metro search envelope (up to Gandhinagar/GIFT City)
-export const OFFER_TIMEOUT_SECONDS = 30;
+export const OFFER_TIMEOUT_SECONDS = parseInt(process.env.OFFER_TIMEOUT_SECONDS || '180', 10);
 
 /**
  * In-Memory fallback store for assignments when DB is unavailable
@@ -446,7 +446,7 @@ export async function acceptOffer(rideId, driverId) {
       client = await pool.connect();
       await client.query('BEGIN');
 
-      // 1. Verify active assignment
+      // 1. Verify active assignment or ride status
       const asgnRes = await client.query(
         `SELECT * FROM ride_assignments 
          WHERE ride_id = $1 AND driver_id = $2 AND status = 'OFFERED' 
@@ -455,32 +455,23 @@ export async function acceptOffer(rideId, driverId) {
       );
 
       if (asgnRes.rows.length === 0) {
-        await client.query('ROLLBACK');
-        return { success: false, error: 'OfferNotFound', message: 'No active OFFERED assignment found for this driver.' };
-      }
-
-      const asgn = asgnRes.rows[0];
-
-      // Check for expiration
-      if (new Date(asgn.expires_at) < new Date()) {
+        // Fallback: check if the ride is currently in DRIVER_ASSIGNED for this driver
+        const rideCheck = await client.query(
+          `SELECT * FROM rides WHERE id = $1 AND driver_id = $2 AND status = 'DRIVER_ASSIGNED'`,
+          [rideId, driverId]
+        );
+        if (rideCheck.rows.length === 0) {
+          await client.query('ROLLBACK');
+          return { success: false, error: 'OfferNotFound', message: 'No active assignment found for this driver.' };
+        }
+      } else {
+        const asgn = asgnRes.rows[0];
+        // 2. Mark assignment ACCEPTED
         await client.query(
-          `UPDATE ride_assignments SET status = 'EXPIRED', responded_at = NOW() WHERE id = $1`,
+          `UPDATE ride_assignments SET status = 'ACCEPTED', responded_at = NOW() WHERE id = $1`,
           [asgn.id]
         );
-        await client.query(
-          `UPDATE drivers SET status = 'AVAILABLE', updated_at = NOW() WHERE id = $1 AND status = 'RESERVED'`,
-          [driverId]
-        );
-        await client.query('COMMIT');
-      await invalidateRide(rideId);
-        return { success: false, error: 'OfferExpired', message: 'This ride offer has expired.' };
       }
-
-      // 2. Mark assignment ACCEPTED
-      await client.query(
-        `UPDATE ride_assignments SET status = 'ACCEPTED', responded_at = NOW() WHERE id = $1`,
-        [asgn.id]
-      );
 
       // 3. Mark driver ON_TRIP
       await client.query(

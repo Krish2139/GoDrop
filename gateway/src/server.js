@@ -83,6 +83,23 @@ app.patch('/api/v1/drivers/:id/location', authenticateJwt, authorizeRoles('DRIVE
 // All other /api/v1/rides/* traffic -> Ride Service (:5001)
 app.use('/api/v1/rides', createBreakerProxy(rideServiceBreaker, RIDE_SERVICE_URL));
 
+// Identity header extraction middleware
+app.use((req, res, next) => {
+  if (req.headers.authorization) {
+    try {
+      const parts = req.headers.authorization.split(' ');
+      if (parts.length === 2 && parts[1].includes('.')) {
+        const payload = JSON.parse(Buffer.from(parts[1].split('.')[1], 'base64').toString());
+        if (payload && payload.id) {
+          req.headers['x-user-id'] = payload.id;
+          req.headers['x-user-role'] = payload.role;
+        }
+      }
+    } catch (e) {}
+  }
+  next();
+});
+
 // All other /api/v1/drivers/* traffic -> Driver Service (:5002)
 app.use('/api/v1/drivers', createBreakerProxy(driverServiceBreaker, DRIVER_SERVICE_URL));
 
