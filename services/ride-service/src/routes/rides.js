@@ -35,6 +35,7 @@ export async function invalidateRideCaches(rideId) {
   await Promise.all([
     invalidateKey(`cache:rides:${rideId}`),
     invalidatePattern('cache:rides:list:*'),
+    invalidatePattern('cache:drivers:*'),
   ]);
 }
 
@@ -154,7 +155,28 @@ async function executeTransition(res, rideId, targetState, additionalFields = {}
         ]
       );
 
+      // When driver arrives at pickup, update driver location to pickup coordinates
+      if (targetState === RIDE_STATES.DRIVER_ARRIVED && updatedRide.driver_id) {
+        if (updatedRide.pickup_latitude && updatedRide.pickup_longitude) {
+          await client.query(
+            `UPDATE drivers 
+             SET current_latitude = $1, current_longitude = $2, updated_at = NOW() 
+             WHERE id = $3`,
+            [updatedRide.pickup_latitude, updatedRide.pickup_longitude, updatedRide.driver_id]
+          );
+        }
+      }
+
+      // When trip starts, update driver status to ON_TRIP
+      if (targetState === RIDE_STATES.IN_PROGRESS && updatedRide.driver_id) {
+        await client.query(
+          `UPDATE drivers SET status = 'ON_TRIP', updated_at = NOW() WHERE id = $1`,
+          [updatedRide.driver_id]
+        );
+      }
+
       // If ride is completed, increment passenger total_rides count and release driver back to AVAILABLE
+      // ALSO update driver's current location to ride destination (e.g. from Vastrapur to GIFT City)!
       if (targetState === RIDE_STATES.COMPLETED) {
         if (updatedRide.passenger_id) {
           await client.query(
@@ -164,14 +186,20 @@ async function executeTransition(res, rideId, targetState, additionalFields = {}
         }
         if (updatedRide.driver_id) {
           await client.query(
-            `UPDATE drivers SET status = 'AVAILABLE', updated_at = NOW() WHERE id = $1`,
-            [updatedRide.driver_id]
+            `UPDATE drivers 
+             SET status = 'AVAILABLE', 
+                 current_latitude = COALESCE($1, current_latitude), 
+                 current_longitude = COALESCE($2, current_longitude), 
+                 updated_at = NOW() 
+             WHERE id = $3`,
+            [updatedRide.destination_latitude, updatedRide.destination_longitude, updatedRide.driver_id]
           );
         }
       }
 
       await client.query('COMMIT');
       await invalidateRideCaches(rideId);
+      await invalidatePattern('cache:drivers:*');
 
       // Realtime Event Broadcasting via Redis to Socket.IO
       publishRealtimeEvent(`ride:${rideId}`, 'ride:status:changed', {
@@ -191,6 +219,34 @@ async function executeTransition(res, rideId, targetState, additionalFields = {}
         status: targetState,
         ride: updatedRide,
       });
+
+      // Broadcast Driver Location Telemetry on Arrival & Completion
+      if (targetState === RIDE_STATES.COMPLETED && updatedRide.driver_id) {
+        publishRealtimeEvent(`ride:${rideId}`, 'ride:driver:location', {
+          driverId: updatedRide.driver_id,
+          driverName: updatedRide.driver_name,
+          latitude: updatedRide.destination_latitude,
+          longitude: updatedRide.destination_longitude,
+          heading: 0,
+          speed: 0,
+        });
+        publishRealtimeEvent('admin:telemetry', 'driver:telemetry:update', {
+          driverId: updatedRide.driver_id,
+          status: 'AVAILABLE',
+          latitude: updatedRide.destination_latitude,
+          longitude: updatedRide.destination_longitude,
+          heading: 0,
+        });
+      } else if (targetState === RIDE_STATES.DRIVER_ARRIVED && updatedRide.driver_id) {
+        publishRealtimeEvent(`ride:${rideId}`, 'ride:driver:location', {
+          driverId: updatedRide.driver_id,
+          driverName: updatedRide.driver_name,
+          latitude: updatedRide.pickup_latitude,
+          longitude: updatedRide.pickup_longitude,
+          heading: 0,
+          speed: 0,
+        });
+      }
 
       logger.info({ rideId, previousStatus: ride.status, newStatus: targetState }, 'Atomic ride transition committed & cache invalidated');
 
@@ -227,9 +283,28 @@ async function executeTransition(res, rideId, targetState, additionalFields = {}
   ride.updated_at = new Date().toISOString();
   Object.assign(ride, additionalFields);
 
+  if (targetState === RIDE_STATES.DRIVER_ARRIVED && ride.driver_id) {
+    const d = memoryDrivers.find(d => d.id === ride.driver_id);
+    if (d && ride.pickup_latitude && ride.pickup_longitude) {
+      d.current_latitude = ride.pickup_latitude;
+      d.current_longitude = ride.pickup_longitude;
+    }
+  }
+
+  if (targetState === RIDE_STATES.IN_PROGRESS && ride.driver_id) {
+    const d = memoryDrivers.find(d => d.id === ride.driver_id);
+    if (d) d.status = 'ON_TRIP';
+  }
+
   if (targetState === RIDE_STATES.COMPLETED && ride.driver_id) {
     const d = memoryDrivers.find(d => d.id === ride.driver_id);
-    if (d) d.status = 'AVAILABLE';
+    if (d) {
+      d.status = 'AVAILABLE';
+      if (ride.destination_latitude && ride.destination_longitude) {
+        d.current_latitude = ride.destination_latitude;
+        d.current_longitude = ride.destination_longitude;
+      }
+    }
   }
 
   await invalidateRideCaches(rideId);

@@ -61,6 +61,30 @@ const PassengerPortal = () => {
   const [retryingDispatch, setRetryingDispatch] = useState(false);
   const [dismissedModalRideId, setDismissedModalRideId] = useState(null);
   const [cancelledRideInfo, setCancelledRideInfo] = useState(null);
+  const [modalCountdown, setModalCountdown] = useState(60);
+
+  // Keep No Driver Modal visible on screen for 1 minute (60 seconds) with live countdown & auto-dismiss
+  useEffect(() => {
+    let timer;
+    if (showNoDriverModal) {
+      setModalCountdown(60);
+      timer = setInterval(() => {
+        setModalCountdown(prev => {
+          if (prev <= 1) {
+            clearInterval(timer);
+            setShowNoDriverModal(false);
+            const rideIdToDismiss = activeRide?.id || cancelledRideInfo?.id;
+            if (rideIdToDismiss) {
+              setDismissedModalRideId(rideIdToDismiss);
+            }
+            return 0;
+          }
+          return prev - 1;
+        });
+      }, 1000);
+    }
+    return () => clearInterval(timer);
+  }, [showNoDriverModal, activeRide?.id, cancelledRideInfo?.id]);
 
   // Automatically pop up modal when active ride is in PENDING state (No driver available)
   useEffect(() => {
@@ -478,10 +502,44 @@ const PassengerPortal = () => {
               display: 'flex',
               alignItems: 'center',
               justifyContent: 'center',
-              margin: '0 auto 1.25rem auto',
+              margin: '0 auto 0.75rem auto',
               border: '2px solid #FCA5A5'
             }}>
               <AlertTriangle size={32} />
+            </div>
+
+            {/* 1-Minute Active Countdown Indicator Badge */}
+            <div style={{
+              display: 'inline-flex',
+              alignItems: 'center',
+              gap: '0.45rem',
+              background: '#FFFBEB',
+              color: '#B45309',
+              border: '1px solid #FDE68A',
+              padding: '0.35rem 0.85rem',
+              borderRadius: '9999px',
+              fontSize: '0.82rem',
+              fontWeight: 700,
+              marginBottom: '0.75rem'
+            }}>
+              <Clock size={15} /> Showing on screen: {modalCountdown}s remaining (1 min)
+            </div>
+
+            {/* Progress Bar (60s countdown) */}
+            <div style={{
+              width: '100%',
+              height: '5px',
+              background: '#F1F5F9',
+              borderRadius: '3px',
+              overflow: 'hidden',
+              marginBottom: '1.25rem'
+            }}>
+              <div style={{
+                width: `${(modalCountdown / 60) * 100}%`,
+                height: '100%',
+                background: modalCountdown > 15 ? '#DC2626' : '#EF4444',
+                transition: 'width 1s linear'
+              }} />
             </div>
 
             <h3 style={{ fontSize: '1.35rem', fontWeight: 800, color: '#1E293B', marginBottom: '0.5rem' }}>

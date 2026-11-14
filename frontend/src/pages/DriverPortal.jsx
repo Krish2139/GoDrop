@@ -414,6 +414,13 @@ const DriverPortal = () => {
       const res = await apiClient.post(`/rides/${activeRide.id}/${endpoint}`);
       if (res.data.success) {
         setMessage(successText);
+        if (endpoint === 'complete' && activeRide.destination_latitude && activeRide.destination_longitude) {
+          setSimLat(activeRide.destination_latitude);
+          setSimLng(activeRide.destination_longitude);
+        } else if (endpoint === 'arrived' && activeRide.pickup_latitude && activeRide.pickup_longitude) {
+          setSimLat(activeRide.pickup_latitude);
+          setSimLng(activeRide.pickup_longitude);
+        }
         await loadDriverData();
       }
     } catch (err) {
