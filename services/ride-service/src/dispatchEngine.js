@@ -159,12 +159,39 @@ export async function dispatchRide(rideId) {
         );
 
         await client.query('COMMIT');
-      await invalidateRide(rideId);
+        await invalidateRide(rideId);
         logger.warn({ rideId }, 'No eligible drivers available. Ride moved to PENDING status.');
+
+        // Broadcast real-time events to passenger & ride rooms
+        publishRealtimeEvent(`ride:${rideId}`, 'ride:status:changed', {
+          rideId,
+          status: 'PENDING',
+          noDriversAvailable: true,
+          message: 'No drivers available at this moment. All nearby drivers declined or are currently busy.',
+          ride: { ...ride, status: 'PENDING', driver_id: null },
+        });
+
+        publishRealtimeEvent(`ride:${rideId}`, 'ride:no_drivers_available', {
+          rideId,
+          status: 'PENDING',
+          message: 'No drivers available at this moment. All nearby drivers declined or are currently busy.',
+          ride: { ...ride, status: 'PENDING', driver_id: null },
+        });
+
+        if (ride.passenger_id) {
+          publishRealtimeEvent(`user:${ride.passenger_id}`, 'ride:no_drivers_available', {
+            rideId,
+            status: 'PENDING',
+            message: 'No drivers available at this moment. All nearby drivers declined or are currently busy.',
+            ride: { ...ride, status: 'PENDING', driver_id: null },
+          });
+        }
+
         return {
           success: true,
           dispatched: false,
           status: 'PENDING',
+          noDriversAvailable: true,
           message: 'No available drivers nearby. Ride queued in PENDING state for retry.',
         };
       }
@@ -193,11 +220,20 @@ export async function dispatchRide(rideId) {
           [rideId]
         );
         await client.query('COMMIT');
-      await invalidateRide(rideId);
+        await invalidateRide(rideId);
+
+        publishRealtimeEvent(`ride:${rideId}`, 'ride:no_drivers_available', {
+          rideId,
+          status: 'PENDING',
+          message: `No drivers available within ${MAX_DISPATCH_RADIUS_KM}km radius.`,
+          ride: { ...ride, status: 'PENDING', driver_id: null },
+        });
+
         return {
           success: true,
           dispatched: false,
           status: 'PENDING',
+          noDriversAvailable: true,
           message: `No drivers within ${MAX_DISPATCH_RADIUS_KM}km radius. Ride set to PENDING.`,
         };
       }
@@ -621,6 +657,13 @@ export async function rejectOffer(rideId, driverId, reason = 'Driver declined') 
 
     // 5. Automatic Cascading Dispatch to next candidate
     nextDispatchResult = await dispatchRide(rideId);
+    if (!nextDispatchResult.dispatched) {
+      publishRealtimeEvent(`ride:${rideId}`, 'ride:no_drivers_available', {
+        rideId,
+        status: 'PENDING',
+        message: 'No drivers available at this moment. All nearby drivers declined or are currently busy.',
+      });
+    }
     return {
       success: true,
       message: 'Driver rejected offer. Ride automatically re-dispatched to next eligible driver.',
@@ -721,6 +764,13 @@ export async function expireOffer(rideId) {
 
     // 5. Automatic Cascading Dispatch to next candidate
     const nextDispatch = await dispatchRide(rideId);
+    if (!nextDispatch.dispatched) {
+      publishRealtimeEvent(`ride:${rideId}`, 'ride:no_drivers_available', {
+        rideId,
+        status: 'PENDING',
+        message: 'No drivers available at this moment. Offer timed out and no other drivers available.',
+      });
+    }
     return {
       success: true,
       message: 'Offer expired (30s timeout). Automatically re-dispatched to next eligible driver.',

@@ -109,6 +109,16 @@ export function onDispatchOffer(callback) {
 }
 
 /**
+ * Subscribe to No Drivers Available notification
+ */
+export function onNoDriversAvailable(callback) {
+  const s = getSocket();
+  if (!s) return () => {};
+  s.on('ride:no_drivers_available', callback);
+  return () => s.off('ride:no_drivers_available', callback);
+}
+
+/**
  * Subscribe to Admin Telemetry updates
  */
 export function onAdminDriverTelemetry(callback) {

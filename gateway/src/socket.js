@@ -82,8 +82,8 @@ export function initSocketServer(httpServer) {
           } else {
             io.emit(event, data);
           }
-          if (event === 'ride:status:changed') {
-            io.emit('ride:status:changed', data);
+          if (event === 'ride:status:changed' || event === 'ride:no_drivers_available') {
+            io.emit(event, data);
           }
           socketMetrics.eventsEmitted++;
           logger.debug({ room, event }, 'Distributed event relayed from Redis to Socket.IO');

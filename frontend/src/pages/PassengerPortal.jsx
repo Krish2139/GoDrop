@@ -16,7 +16,9 @@ import {
   User, 
   Star, 
   ArrowRight,
-  Sliders
+  Sliders,
+  AlertTriangle,
+  X
 } from 'lucide-react';
 import StatCard from '../components/StatCard';
 import RideLifecycleTimeline from '../components/RideLifecycleTimeline';
@@ -25,7 +27,8 @@ import {
   joinRideRoom, 
   leaveRideRoom, 
   onRideStatusChanged, 
-  onDriverLocation 
+  onDriverLocation,
+  onNoDriversAvailable
 } from '../services/socket';
 import './PassengerPortal.css';
 
@@ -51,6 +54,11 @@ const PassengerPortal = () => {
   const [error, setError] = useState(null);
   const [liveDriverLocation, setLiveDriverLocation] = useState(null);
   const [socketConnected, setSocketConnected] = useState(false);
+
+  // No Drivers Available Pop Modal State
+  const [showNoDriverModal, setShowNoDriverModal] = useState(false);
+  const [noDriverReason, setNoDriverReason] = useState('All nearby drivers have declined or are currently busy.');
+  const [retryingDispatch, setRetryingDispatch] = useState(false);
 
   // Manual Passenger Management State
   const [showAddPassenger, setShowAddPassenger] = useState(false);
@@ -154,14 +162,26 @@ const PassengerPortal = () => {
       const unsubStatus = onRideStatusChanged((data) => {
         if (data) {
           console.log('⚡ Realtime ride status received via Socket.IO:', data.status);
+          if (data.noDriversAvailable) {
+            setShowNoDriverModal(true);
+            if (data.message) setNoDriverReason(data.message);
+          }
           loadData();
         }
+      });
+
+      const unsubNoDrivers = onNoDriversAvailable((data) => {
+        console.warn('⚠️ No drivers available event received:', data);
+        setShowNoDriverModal(true);
+        if (data?.message) setNoDriverReason(data.message);
+        loadData();
       });
 
       return () => {
         s.off('connect', onConn);
         s.off('disconnect', onDis);
         unsubStatus();
+        unsubNoDrivers();
       };
     }
   }, []);
@@ -291,11 +311,42 @@ const PassengerPortal = () => {
       if (res.data.success) {
         setMessage('Ride has been cancelled.');
         setActiveRide(null);
+        setShowNoDriverModal(false);
         await loadData();
       }
     } catch (err) {
       setError(err.response?.data?.message || 'Failed to cancel ride');
     }
+  };
+
+  // Retry Auto-Dispatch when no drivers are available
+  const handleRetryDispatch = async () => {
+    if (!activeRide) return;
+    setRetryingDispatch(true);
+    setError(null);
+    try {
+      const res = await apiClient.post(`/rides/${activeRide.id}/dispatch`);
+      if (res.data?.dispatched) {
+        setShowNoDriverModal(false);
+        setMessage(`Driver matched! Nearest driver ${res.data.driver?.name || 'Driver'} assigned.`);
+        await loadData();
+      } else {
+        setMessage('Still no available drivers nearby. Please try again in a few moments or cancel.');
+      }
+    } catch (err) {
+      setError(err.response?.data?.message || 'Failed to retry dispatch');
+    } finally {
+      setRetryingDispatch(false);
+    }
+  };
+
+  // Cancel directly from No Drivers Available Modal
+  const handleCancelFromModal = async () => {
+    if (!activeRide) {
+      setShowNoDriverModal(false);
+      return;
+    }
+    await handleCancelRide(activeRide.id);
   };
 
   const getStatusBadge = (status) => {
@@ -314,6 +365,119 @@ const PassengerPortal = () => {
 
   return (
     <div className="container passenger-portal-page">
+      {/* Pop Message Modal: No Drivers Available */}
+      {showNoDriverModal && (
+        <div style={{
+          position: 'fixed',
+          inset: 0,
+          backgroundColor: 'rgba(15, 23, 42, 0.65)',
+          backdropFilter: 'blur(5px)',
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'center',
+          zIndex: 99999,
+          padding: '1rem',
+        }}>
+          <div style={{
+            maxWidth: '460px',
+            width: '100%',
+            background: '#ffffff',
+            borderRadius: '16px',
+            boxShadow: '0 25px 50px -12px rgba(0, 0, 0, 0.35)',
+            border: '1px solid #fee2e2',
+            padding: '2rem',
+            textAlign: 'center',
+            position: 'relative'
+          }}>
+            {/* Close 'X' Button */}
+            <button 
+              onClick={() => setShowNoDriverModal(false)}
+              style={{
+                position: 'absolute',
+                top: '1rem',
+                right: '1rem',
+                background: 'transparent',
+                border: 'none',
+                cursor: 'pointer',
+                color: '#94a3b8',
+                padding: '0.25rem'
+              }}
+              aria-label="Close"
+            >
+              <X size={20} />
+            </button>
+
+            {/* Warning Icon Badge */}
+            <div style={{
+              width: '64px',
+              height: '64px',
+              borderRadius: '50%',
+              backgroundColor: '#FEF2F2',
+              color: '#DC2626',
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'center',
+              margin: '0 auto 1.25rem auto',
+              border: '2px solid #FCA5A5'
+            }}>
+              <AlertTriangle size={32} />
+            </div>
+
+            <h3 style={{ fontSize: '1.3rem', fontWeight: 800, color: '#1E293B', marginBottom: '0.5rem' }}>
+              No Driver Available At This Moment
+            </h3>
+
+            <p style={{ fontSize: '0.92rem', color: '#64748B', lineHeight: 1.5, marginBottom: '1.25rem' }}>
+              {noDriverReason || 'All nearby drivers have declined the ride request or are currently unavailable. We could not match your ride at this time.'}
+            </p>
+
+            {activeRide && (
+              <div style={{
+                background: '#F8FAFC',
+                border: '1px solid #E2E8F0',
+                borderRadius: '10px',
+                padding: '0.85rem 1rem',
+                marginBottom: '1.5rem',
+                textAlign: 'left',
+                fontSize: '0.85rem'
+              }}>
+                <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '0.35rem' }}>
+                  <span style={{ color: '#64748B' }}>Pickup:</span>
+                  <b style={{ color: '#1E293B' }}>{activeRide.pickup_address}</b>
+                </div>
+                <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '0.35rem' }}>
+                  <span style={{ color: '#64748B' }}>Destination:</span>
+                  <b style={{ color: '#1E293B' }}>{activeRide.destination_address}</b>
+                </div>
+                <div style={{ display: 'flex', justifyContent: 'space-between' }}>
+                  <span style={{ color: '#64748B' }}>Fare:</span>
+                  <b style={{ color: '#2563EB' }}>₹{activeRide.fare_amount}</b>
+                </div>
+              </div>
+            )}
+
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '0.65rem' }}>
+              <button 
+                onClick={handleRetryDispatch}
+                disabled={retryingDispatch}
+                className="btn btn-primary"
+                style={{ width: '100%', padding: '0.75rem', justifyContent: 'center', fontSize: '0.95rem' }}
+              >
+                <RefreshCw size={16} className={retryingDispatch ? 'spin' : ''} />
+                <span>{retryingDispatch ? 'Searching Again...' : 'Retry Driver Search'}</span>
+              </button>
+
+              <button 
+                onClick={handleCancelFromModal}
+                className="btn btn-outline"
+                style={{ width: '100%', padding: '0.75rem', justifyContent: 'center', color: '#DC2626', borderColor: '#FCA5A5' }}
+              >
+                <XCircle size={16} /> Cancel Ride Request
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
       {/* Top Banner */}
       <div className="portal-header">
         <div>
@@ -570,6 +734,36 @@ const PassengerPortal = () => {
                     <b>⚡ Socket.IO Live GPS Stream:</b> {liveDriverLocation.driverName || 'Driver'} at <code>{Number(liveDriverLocation.latitude).toFixed(4)}° N, {Number(liveDriverLocation.longitude).toFixed(4)}° E</code>
                     {liveDriverLocation.speed > 0 && <span style={{ marginLeft: '0.4rem', color: '#047857' }}>({liveDriverLocation.speed} km/h)</span>}
                   </div>
+                </div>
+              )}
+
+              {/* No Drivers Available Warning Banner in Card */}
+              {activeRide.status === 'PENDING' && !activeRide.driver_id && (
+                <div style={{
+                  background: '#FEF2F2',
+                  border: '1px solid #FECACA',
+                  borderRadius: 'var(--radius-md)',
+                  padding: '0.85rem 1rem',
+                  marginTop: '0.75rem',
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: '0.75rem',
+                  color: '#991B1B',
+                  fontSize: '0.85rem'
+                }}>
+                  <AlertTriangle size={20} style={{ flexShrink: 0, color: '#DC2626' }} />
+                  <div style={{ flex: 1 }}>
+                    <b style={{ display: 'block', fontSize: '0.9rem', marginBottom: '0.15rem' }}>No Driver Available At This Moment</b>
+                    <span>All nearby drivers declined or timed out. You can retry dispatch or cancel.</span>
+                  </div>
+                  <button 
+                    onClick={handleRetryDispatch}
+                    disabled={retryingDispatch}
+                    className="btn btn-sm btn-primary"
+                    style={{ padding: '0.35rem 0.65rem', fontSize: '0.8rem', whiteSpace: 'nowrap' }}
+                  >
+                    <RefreshCw size={13} className={retryingDispatch ? 'spin' : ''} /> Retry
+                  </button>
                 </div>
               )}
 
