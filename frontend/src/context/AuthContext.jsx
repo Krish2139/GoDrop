@@ -1,6 +1,19 @@
 import React, { createContext, useContext, useState, useEffect } from 'react';
 import apiClient from '../api/client';
 
+export const KNOWN_DRIVERS = [
+  { id: 'driver-seed-1', name: 'Rajesh Prajapati', email: 'driver@rideflow.io', vehicle: 'Toyota Prius (White)', plate: 'GJ-01-AB-1234', location: 'SG Highway (Iscon)' },
+  { id: 'driver-seed-2', name: 'Priya Desai', email: 'driver2@rideflow.io', vehicle: 'Hyundai Verna (Silver)', plate: 'GJ-01-CD-5678', location: 'Vastrapur Lake' },
+  { id: 'driver-seed-3', name: 'Amit Mehta', email: 'driver3@rideflow.io', vehicle: 'Honda City (Black)', plate: 'GJ-01-EF-9012', location: 'CG Road' },
+  { id: 'driver-seed-4', name: 'Suresh Solanki', email: 'driver4@rideflow.io', vehicle: 'Maruti Dzire (White)', plate: 'GJ-27-GH-3456', location: 'Sabarmati Riverfront' },
+  { id: 'driver-seed-5', name: 'Deepak Joshi', email: 'driver5@rideflow.io', vehicle: 'Tata Nexon EV (Teal)', plate: 'GJ-01-IJ-7890', location: 'SVPIA Airport' },
+];
+
+export const KNOWN_PASSENGERS = [
+  { id: 'pass-seed-1', name: 'Aarav Patel', email: 'passenger@rideflow.io', phone: '+91 98250 12345' },
+  { id: 'pass-seed-2', name: 'Neha Shah', email: 'neha@rideflow.io', phone: '+91 98250 54321' },
+];
+
 const AuthContext = createContext(null);
 
 export const AuthProvider = ({ children }) => {
@@ -86,6 +99,16 @@ export const AuthProvider = ({ children }) => {
     }
   };
 
+  // Switch to specific driver account
+  const switchDriver = async (email) => {
+    return await login(email, 'driver123');
+  };
+
+  // Switch to specific passenger account
+  const switchPassenger = async (email, password = 'pass123') => {
+    return await login(email, password);
+  };
+
   return (
     <AuthContext.Provider
       value={{
@@ -98,6 +121,10 @@ export const AuthProvider = ({ children }) => {
         register,
         logout,
         demoLogin,
+        switchDriver,
+        switchPassenger,
+        knownDrivers: KNOWN_DRIVERS,
+        knownPassengers: KNOWN_PASSENGERS,
       }}
     >
       {children}

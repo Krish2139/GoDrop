@@ -39,7 +39,7 @@ const GPS_WAYPOINTS = [
 ];
 
 const DriverPortal = () => {
-  const { user } = useAuth();
+  const { user, switchDriver, register, knownDrivers } = useAuth();
   const [driver, setDriver] = useState(null);
   const [rides, setRides] = useState([]);
   const [activeRide, setActiveRide] = useState(null);
@@ -51,10 +51,59 @@ const DriverPortal = () => {
   const [message, setMessage] = useState(null);
   const [error, setError] = useState(null);
 
+  // Manual Driver Management State
+  const [showAddDriver, setShowAddDriver] = useState(false);
+  const [newDrvName, setNewDrvName] = useState('');
+  const [newDrvEmail, setNewDrvEmail] = useState('');
+  const [newDrvVehicle, setNewDrvVehicle] = useState('Toyota Innova (Silver)');
+  const [newDrvPlate, setNewDrvPlate] = useState('GJ-01-XY-1234');
+  const [newDrvPassword, setNewDrvPassword] = useState('driver123');
+
   // GPS Simulation State (Default: Ahmedabad SG Highway)
   const [simLat, setSimLat] = useState(23.0275);
   const [simLng, setSimLng] = useState(72.5076);
   const [simHeading, setSimHeading] = useState(90);
+
+  const handleSwitchDriver = async (email) => {
+    setActionLoading(true);
+    setError(null);
+    try {
+      await switchDriver(email);
+      setMessage(`Switched terminal to driver: ${email}`);
+      await loadDriverData();
+    } catch (err) {
+      setError(err.message || 'Failed to switch driver account');
+    } finally {
+      setActionLoading(false);
+    }
+  };
+
+  const handleCreateNewDriver = async (e) => {
+    e.preventDefault();
+    try {
+      setActionLoading(true);
+      setError(null);
+      await register({
+        name: newDrvName,
+        email: newDrvEmail,
+        password: newDrvPassword,
+        role: 'DRIVER',
+        vehicle_model: newDrvVehicle,
+        license_plate: newDrvPlate,
+        latitude: 23.0275,
+        longitude: 72.5076,
+      });
+      setMessage(`New driver registered & active: ${newDrvName} (${newDrvVehicle})`);
+      setShowAddDriver(false);
+      setNewDrvName('');
+      setNewDrvEmail('');
+      await loadDriverData();
+    } catch (err) {
+      setError(err.response?.data?.message || err.message || 'Failed to register driver');
+    } finally {
+      setActionLoading(false);
+    }
+  };
 
   const loadDriverData = async () => {
     try {
@@ -357,6 +406,118 @@ const DriverPortal = () => {
           <span>{error}</span>
         </div>
       )}
+
+      {/* Ahmedabad Driver Fleet Account Switcher */}
+      <div className="card fleet-switcher-card" style={{ marginBottom: '1.5rem', background: '#f8fafc', border: '1px solid #e2e8f0', padding: '1.25rem' }}>
+        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '0.75rem', flexWrap: 'wrap', gap: '0.5rem' }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+            <Car size={18} style={{ color: '#2563eb' }} />
+            <h3 style={{ margin: 0, fontSize: '0.95rem', fontWeight: 600 }}>Switch Active Driver Account (Ahmedabad Fleet)</h3>
+          </div>
+          <button
+            type="button"
+            onClick={() => setShowAddDriver(!showAddDriver)}
+            className="btn btn-sm btn-outline"
+            style={{ fontSize: '0.8rem', padding: '4px 10px' }}
+          >
+            {showAddDriver ? 'Close Registration' : '+ Register New Driver Manually'}
+          </button>
+        </div>
+
+        {/* 5 Driver Selection Cards */}
+        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(210px, 1fr))', gap: '0.75rem' }}>
+          {(knownDrivers || []).map((d) => {
+            const isCurrent = user?.email === d.email;
+            return (
+              <button
+                key={d.id}
+                type="button"
+                onClick={() => handleSwitchDriver(d.email)}
+                disabled={actionLoading}
+                style={{
+                  padding: '0.85rem',
+                  borderRadius: '8px',
+                  border: isCurrent ? '2px solid #2563eb' : '1px solid #cbd5e1',
+                  background: isCurrent ? '#eff6ff' : '#ffffff',
+                  textAlign: 'left',
+                  cursor: 'pointer',
+                  transition: 'all 0.15s ease',
+                  boxShadow: isCurrent ? '0 2px 4px rgba(37,99,235,0.12)' : 'none',
+                }}
+              >
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '4px' }}>
+                  <span style={{ fontWeight: 600, fontSize: '0.88rem', color: isCurrent ? '#1d4ed8' : '#1e293b' }}>{d.name}</span>
+                  {isCurrent && <span style={{ fontSize: '0.65rem', background: '#2563eb', color: '#fff', padding: '1px 5px', borderRadius: '3px' }}>ACTIVE</span>}
+                </div>
+                <div style={{ fontSize: '0.75rem', color: '#475569', marginBottom: '3px' }}>{d.vehicle}</div>
+                <div style={{ fontSize: '0.7rem', color: '#64748b', display: 'flex', justifyContent: 'space-between' }}>
+                  <code>{d.plate}</code>
+                  <span>{d.location}</span>
+                </div>
+              </button>
+            );
+          })}
+        </div>
+
+        {/* Inline Add Driver Form */}
+        {showAddDriver && (
+          <form onSubmit={handleCreateNewDriver} style={{ marginTop: '1rem', padding: '1rem', background: '#fff', borderRadius: '8px', border: '1px dashed #94a3b8' }}>
+            <h4 style={{ margin: '0 0 0.75rem 0', fontSize: '0.88rem', fontWeight: 600 }}>Register New Custom Driver Account</h4>
+            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))', gap: '0.75rem' }}>
+              <div>
+                <label style={{ fontSize: '0.75rem', fontWeight: 500, display: 'block', marginBottom: '2px' }}>Driver Name</label>
+                <input
+                  type="text"
+                  required
+                  placeholder="e.g. Hardik Pandya"
+                  value={newDrvName}
+                  onChange={(e) => setNewDrvName(e.target.value)}
+                  style={{ width: '100%', padding: '6px 8px', borderRadius: '4px', border: '1px solid #cbd5e1' }}
+                />
+              </div>
+              <div>
+                <label style={{ fontSize: '0.75rem', fontWeight: 500, display: 'block', marginBottom: '2px' }}>Email Address</label>
+                <input
+                  type="email"
+                  required
+                  placeholder="e.g. hardik@rideflow.io"
+                  value={newDrvEmail}
+                  onChange={(e) => setNewDrvEmail(e.target.value)}
+                  style={{ width: '100%', padding: '6px 8px', borderRadius: '4px', border: '1px solid #cbd5e1' }}
+                />
+              </div>
+              <div>
+                <label style={{ fontSize: '0.75rem', fontWeight: 500, display: 'block', marginBottom: '2px' }}>Vehicle Model & Color</label>
+                <input
+                  type="text"
+                  required
+                  placeholder="e.g. Toyota Innova (Silver)"
+                  value={newDrvVehicle}
+                  onChange={(e) => setNewDrvVehicle(e.target.value)}
+                  style={{ width: '100%', padding: '6px 8px', borderRadius: '4px', border: '1px solid #cbd5e1' }}
+                />
+              </div>
+              <div>
+                <label style={{ fontSize: '0.75rem', fontWeight: 500, display: 'block', marginBottom: '2px' }}>License Plate</label>
+                <input
+                  type="text"
+                  required
+                  placeholder="e.g. GJ-01-XY-5555"
+                  value={newDrvPlate}
+                  onChange={(e) => setNewDrvPlate(e.target.value)}
+                  style={{ width: '100%', padding: '6px 8px', borderRadius: '4px', border: '1px solid #cbd5e1' }}
+                />
+              </div>
+            </div>
+            <div style={{ marginTop: '0.75rem', display: 'flex', justifyContent: 'flex-end', gap: '0.5rem' }}>
+              <button type="button" onClick={() => setShowAddDriver(false)} className="btn btn-sm btn-outline">Cancel</button>
+              <button type="submit" disabled={actionLoading} className="btn btn-sm btn-primary">
+                Register & Switch to This Driver
+              </button>
+            </div>
+          </form>
+        )}
+      </div>
 
       {/* Live Incoming Ride Offer Banner (Auto-Dispatch Engine) */}
       {activeOffer && (

@@ -41,7 +41,7 @@ const LOCATION_PRESETS = [
 ];
 
 const PassengerPortal = () => {
-  const { user } = useAuth();
+  const { user, switchPassenger, register, knownPassengers } = useAuth();
   const [profile, setProfile] = useState(null);
   const [rides, setRides] = useState([]);
   const [activeRide, setActiveRide] = useState(null);
@@ -51,6 +51,13 @@ const PassengerPortal = () => {
   const [error, setError] = useState(null);
   const [liveDriverLocation, setLiveDriverLocation] = useState(null);
   const [socketConnected, setSocketConnected] = useState(false);
+
+  // Manual Passenger Management State
+  const [showAddPassenger, setShowAddPassenger] = useState(false);
+  const [newPassName, setNewPassName] = useState('');
+  const [newPassEmail, setNewPassEmail] = useState('');
+  const [newPassPhone, setNewPassPhone] = useState('');
+  const [newPassPassword, setNewPassPassword] = useState('pass123');
 
   // Booking Form State
   const [pickupPreset, setPickupPreset] = useState(LOCATION_PRESETS[0].name);
@@ -204,12 +211,57 @@ const PassengerPortal = () => {
 
       const res = await apiClient.post('/rides', payload);
       if (res.data.success) {
-        setMessage('Ride request submitted! The system is locating nearby drivers.');
+        const assignedDriver = res.data.dispatch?.driver;
+        const driverNotice = assignedDriver 
+          ? ` Nearest driver assigned: ${assignedDriver.name} (${assignedDriver.vehicle_model || 'Vehicle'}, ${assignedDriver.license_plate}). You can open the Driver Portal and switch to their account to accept & complete the trip!` 
+          : ' System is matching nearest available driver.';
+        setMessage('Ride request created!' + driverNotice);
         setActiveRide(res.data.data);
         await loadData();
       }
     } catch (err) {
       setError(err.response?.data?.message || 'Failed to submit ride request');
+    } finally {
+      setBookingLoading(false);
+    }
+  };
+
+  // Switch Active Passenger Account
+  const handleSwitchPassenger = async (email) => {
+    try {
+      setBookingLoading(true);
+      setError(null);
+      await switchPassenger(email);
+      setMessage(`Switched active passenger account to: ${email}`);
+      await loadData();
+    } catch (err) {
+      setError(err.message || 'Failed to switch passenger');
+    } finally {
+      setBookingLoading(false);
+    }
+  };
+
+  // Create & Register New Passenger Manually
+  const handleCreateNewPassenger = async (e) => {
+    e.preventDefault();
+    try {
+      setBookingLoading(true);
+      setError(null);
+      await register({
+        name: newPassName,
+        email: newPassEmail,
+        phone: newPassPhone || '+91 98000 00000',
+        password: newPassPassword,
+        role: 'PASSENGER',
+      });
+      setMessage(`New passenger created & active: ${newPassName} (${newPassEmail})`);
+      setShowAddPassenger(false);
+      setNewPassName('');
+      setNewPassEmail('');
+      setNewPassPhone('');
+      await loadData();
+    } catch (err) {
+      setError(err.response?.data?.message || err.message || 'Failed to create passenger');
     } finally {
       setBookingLoading(false);
     }
@@ -274,6 +326,113 @@ const PassengerPortal = () => {
           <span>{error}</span>
         </div>
       )}
+
+      {/* Passenger Account Switcher & Manual Add Bar */}
+      <div className="card" style={{ marginBottom: '1.5rem', background: '#f8fafc', border: '1px solid #e2e8f0', padding: '1.25rem' }}>
+        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '0.75rem', flexWrap: 'wrap', gap: '0.5rem' }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+            <User size={18} style={{ color: '#16a34a' }} />
+            <h3 style={{ margin: 0, fontSize: '0.95rem', fontWeight: 600 }}>Active Passenger Account</h3>
+          </div>
+          <button
+            type="button"
+            onClick={() => setShowAddPassenger(!showAddPassenger)}
+            className="btn btn-sm btn-outline"
+            style={{ fontSize: '0.8rem', padding: '4px 10px' }}
+          >
+            {showAddPassenger ? 'Close Registration' : '+ Add New Passenger Manually'}
+          </button>
+        </div>
+
+        {/* Quick Passenger Selector Buttons */}
+        <div style={{ display: 'flex', gap: '0.75rem', flexWrap: 'wrap', marginBottom: showAddPassenger ? '1rem' : 0 }}>
+          {(knownPassengers || []).map((p) => {
+            const isCurrent = user?.email === p.email;
+            return (
+              <button
+                key={p.id}
+                type="button"
+                onClick={() => handleSwitchPassenger(p.email)}
+                disabled={bookingLoading}
+                style={{
+                  padding: '0.5rem 0.85rem',
+                  borderRadius: '6px',
+                  border: isCurrent ? '2px solid #16a34a' : '1px solid #cbd5e1',
+                  background: isCurrent ? '#f0fdf4' : '#ffffff',
+                  cursor: 'pointer',
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: '6px',
+                  fontWeight: isCurrent ? 600 : 400,
+                  color: isCurrent ? '#15803d' : '#334155',
+                }}
+              >
+                <span>{p.name}</span>
+                <span style={{ fontSize: '0.75rem', color: '#64748b' }}>({p.email})</span>
+                {isCurrent && <span style={{ fontSize: '0.65rem', background: '#16a34a', color: '#fff', padding: '1px 5px', borderRadius: '3px' }}>ACTIVE</span>}
+              </button>
+            );
+          })}
+        </div>
+
+        {/* Inline Add Passenger Form */}
+        {showAddPassenger && (
+          <form onSubmit={handleCreateNewPassenger} style={{ marginTop: '0.75rem', padding: '1rem', background: '#fff', borderRadius: '8px', border: '1px dashed #94a3b8' }}>
+            <h4 style={{ margin: '0 0 0.75rem 0', fontSize: '0.88rem', fontWeight: 600 }}>Register New Custom Passenger Account</h4>
+            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))', gap: '0.75rem' }}>
+              <div>
+                <label style={{ fontSize: '0.75rem', fontWeight: 500, display: 'block', marginBottom: '2px' }}>Full Name</label>
+                <input
+                  type="text"
+                  required
+                  placeholder="e.g. Vikram Sarabhai"
+                  value={newPassName}
+                  onChange={(e) => setNewPassName(e.target.value)}
+                  style={{ width: '100%', padding: '6px 8px', borderRadius: '4px', border: '1px solid #cbd5e1' }}
+                />
+              </div>
+              <div>
+                <label style={{ fontSize: '0.75rem', fontWeight: 500, display: 'block', marginBottom: '2px' }}>Email Address</label>
+                <input
+                  type="email"
+                  required
+                  placeholder="e.g. vikram@rideflow.io"
+                  value={newPassEmail}
+                  onChange={(e) => setNewPassEmail(e.target.value)}
+                  style={{ width: '100%', padding: '6px 8px', borderRadius: '4px', border: '1px solid #cbd5e1' }}
+                />
+              </div>
+              <div>
+                <label style={{ fontSize: '0.75rem', fontWeight: 500, display: 'block', marginBottom: '2px' }}>Phone Number</label>
+                <input
+                  type="text"
+                  placeholder="+91 98000 00000"
+                  value={newPassPhone}
+                  onChange={(e) => setNewPassPhone(e.target.value)}
+                  style={{ width: '100%', padding: '6px 8px', borderRadius: '4px', border: '1px solid #cbd5e1' }}
+                />
+              </div>
+              <div>
+                <label style={{ fontSize: '0.75rem', fontWeight: 500, display: 'block', marginBottom: '2px' }}>Password</label>
+                <input
+                  type="password"
+                  required
+                  placeholder="Min 6 characters"
+                  value={newPassPassword}
+                  onChange={(e) => setNewPassPassword(e.target.value)}
+                  style={{ width: '100%', padding: '6px 8px', borderRadius: '4px', border: '1px solid #cbd5e1' }}
+                />
+              </div>
+            </div>
+            <div style={{ marginTop: '0.75rem', display: 'flex', justifyContent: 'flex-end', gap: '0.5rem' }}>
+              <button type="button" onClick={() => setShowAddPassenger(false)} className="btn btn-sm btn-outline">Cancel</button>
+              <button type="submit" disabled={bookingLoading} className="btn btn-sm btn-primary">
+                Create & Switch to This Passenger
+              </button>
+            </div>
+          </form>
+        )}
+      </div>
 
       {/* Top Row: Profile Card & Active Trip Card */}
       <div className="grid grid-cols-3 portal-top-grid">

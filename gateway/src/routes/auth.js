@@ -52,6 +52,10 @@ const registerSchema = z.object({
   name: z.string().min(2, 'Name must be at least 2 characters'),
   phone: z.string().optional().default('+91 90000 00000'),
   role: z.enum(['PASSENGER', 'DRIVER', 'ADMIN']).default('PASSENGER'),
+  vehicle_model: z.string().optional(),
+  license_plate: z.string().optional(),
+  latitude: z.number().optional(),
+  longitude: z.number().optional(),
 });
 
 const loginSchema = z.object({
@@ -120,10 +124,14 @@ router.post('/register', async (req, res) => {
             [`pass-${Date.now()}`, newUser.id]
           );
         } else if (newUser.role === 'DRIVER') {
+          const vehicleModel = validated.vehicle_model || 'Hyundai Grand i10 (White)';
+          const licensePlate = validated.license_plate || `GJ-01-XX-${Math.floor(1000 + Math.random() * 9000)}`;
+          const lat = validated.latitude || 23.0275;
+          const lng = validated.longitude || 72.5076;
           await query(
             `INSERT INTO drivers (id, user_id, vehicle_model, license_plate, rating, status, current_latitude, current_longitude)
-             VALUES ($1, $2, 'Standard Sedan', $3, 5.00, 'AVAILABLE', 12.9716, 77.5946)`,
-            [`driver-${Date.now()}`, newUser.id, `KA-${Math.floor(10 + Math.random() * 90)}-XX-${Math.floor(1000 + Math.random() * 9000)}`]
+             VALUES ($1, $2, $3, $4, 5.00, 'AVAILABLE', $5, $6)`,
+            [`driver-${Date.now()}`, newUser.id, vehicleModel, licensePlate, lat, lng]
           );
         }
       } catch (err) {
