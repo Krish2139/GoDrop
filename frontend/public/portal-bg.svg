@@ -1,0 +1,61 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1440 900" width="100%" height="100%" preserveAspectRatio="none">
+  <defs>
+    <!-- Base background gradient -->
+    <linearGradient id="baseBg" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#EBF3FE" />
+      <stop offset="50%" stop-color="#F0F6FF" />
+      <stop offset="100%" stop-color="#E6F0FD" />
+    </linearGradient>
+
+    <!-- Wave 1: Soft sky blue -->
+    <linearGradient id="softBlue" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#D5E7FE" />
+      <stop offset="100%" stop-color="#C8E0FE" />
+    </linearGradient>
+
+    <!-- Wave 2: Vibrant accent blue ribbon -->
+    <linearGradient id="accentBlue" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#A3CDFD" />
+      <stop offset="50%" stop-color="#96C6FD" />
+      <stop offset="100%" stop-color="#A8D0FD" />
+    </linearGradient>
+
+    <!-- Wave 3: Muted layer -->
+    <linearGradient id="mutedBlue" x1="100%" y1="0%" x2="0%" y2="100%">
+      <stop offset="0%" stop-color="#C2DCFE" />
+      <stop offset="100%" stop-color="#D8EAFF" />
+    </linearGradient>
+  </defs>
+
+  <!-- Base Canvas -->
+  <rect width="1440" height="900" fill="url(#baseBg)" />
+
+  <!-- TOP-LEFT SOFT SPREAD -->
+  <path d="M0,0 L320,0 C260,110 140,160 0,180 Z" fill="#CDE3FE" opacity="0.7" />
+
+  <!-- LEFT SWOOP: BOTTOM-LEFT FLOW -->
+  <!-- Layer 1: Wide background swell -->
+  <path d="M0,380 C120,410 240,490 260,650 C280,780 200,860 140,900 L0,900 Z" fill="#D2E6FE" opacity="0.8" />
+
+  <!-- Layer 2: Main curved ribbon on left (measured from y=230..320) -->
+  <path d="M0,440 C110,440 210,510 220,630 C230,730 180,820 80,900 L0,900 C50,840 80,760 70,680 C60,590 20,520 0,490 Z" fill="url(#accentBlue)" />
+
+  <!-- Layer 3: Soft inner wave line -->
+  <path d="M0,560 C70,580 130,650 140,730 C150,800 110,870 50,900 L0,900 Z" fill="#BEDBFF" opacity="0.6" />
+
+  <!-- RIGHT SWEEP: DIAGONAL FLOWING WAVES (Measured from x=800..1024, y=50..468) -->
+  <!-- Layer 1: Broad soft outer crest -->
+  <path d="M1440,70 C1300,100 1120,240 1020,440 C920,640 980,800 1140,900 L1440,900 Z" fill="url(#mutedBlue)" opacity="0.85" />
+
+  <!-- Layer 2: Secondary sweeping layer -->
+  <path d="M1440,140 C1320,180 1160,310 1090,500 C1020,680 1080,820 1220,900 L1440,900 Z" fill="#D4E7FE" opacity="0.9" />
+
+  <!-- Layer 3: The distinct vivid accent blue wave ribbon (x=950..850, y=250..300) -->
+  <path d="M1440,220 C1330,260 1190,380 1140,540 C1090,700 1140,820 1260,900 L1340,900 C1220,820 1180,720 1220,580 C1260,440 1360,330 1440,290 Z" fill="url(#accentBlue)" />
+
+  <!-- Layer 4: Lower crest swooping to bottom edge -->
+  <path d="M1440,360 C1360,420 1260,550 1240,680 C1220,800 1280,870 1360,900 L1440,900 Z" fill="#BEDBFF" opacity="0.8" />
+
+  <!-- Layer 5: Bottom right soft curl -->
+  <path d="M1440,540 C1380,600 1330,720 1350,820 C1360,860 1390,890 1440,900 Z" fill="#D0E5FE" opacity="0.85" />
+</svg>

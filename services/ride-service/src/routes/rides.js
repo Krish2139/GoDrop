@@ -1,33 +1,69 @@
 import express from 'express';
 import { z } from 'zod';
-import { 
-  RIDE_STATES, 
+import {
+  RIDE_STATES,
   RIDE_LIFECYCLE_STEPS,
   VALID_TRANSITIONS,
-  isValidTransition, 
-  isCancellable, 
-  calculateHaversineDistance, 
-  calculateFare 
+  isValidTransition,
+  isCancellable,
+  calculateHaversineDistance,
+  calculateFare
 } from '../stateMachine.js';
 import { logger } from '../logger.js';
 import { query, isDbConnected, pool } from '../db.js';
-import { 
-  dispatchRide, 
-  acceptOffer, 
-  rejectOffer, 
-  expireOffer, 
+import {
+  dispatchRide,
+  acceptOffer,
+  rejectOffer,
+  expireOffer,
   assignmentsStore,
-  memoryDrivers 
+  memoryDrivers
 } from '../dispatchEngine.js';
-import { 
-  getCache, 
-  setCache, 
-  invalidateKey, 
-  invalidatePattern, 
-  rideCacheMetrics, 
+import {
+  getCache,
+  setCache,
+  invalidateKey,
+  invalidatePattern,
+  rideCacheMetrics,
   isRedisConnected,
-  publishRealtimeEvent 
+  getRedisClient,
+  publishRealtimeEvent
 } from '../redis.js';
+
+const SURGE_REDIS_KEY = 'rideflow:pricing:surge_multiplier';
+let currentSurgeMultiplier = 1.0;
+
+function clampSurgeMultiplier(val) {
+  const num = Number(val);
+  if (!Number.isFinite(num)) return 1.0;
+  return Number(Math.min(3.0, Math.max(1.0, num)).toFixed(1));
+}
+
+export async function getSurgeMultiplier() {
+  if (isRedisConnected()) {
+    try {
+      const rClient = getRedisClient();
+      const raw = await rClient.get(SURGE_REDIS_KEY);
+      if (raw !== null) {
+        currentSurgeMultiplier = clampSurgeMultiplier(parseFloat(raw));
+        return currentSurgeMultiplier;
+      }
+    } catch (e) { }
+  }
+  return currentSurgeMultiplier;
+}
+
+export async function setSurgeMultiplier(multiplier) {
+  const clamped = clampSurgeMultiplier(multiplier);
+  currentSurgeMultiplier = clamped;
+  if (isRedisConnected()) {
+    try {
+      const rClient = getRedisClient();
+      await rClient.set(SURGE_REDIS_KEY, String(clamped));
+    } catch (e) { }
+  }
+  return clamped;
+}
 
 const router = express.Router();
 
@@ -178,7 +214,64 @@ async function executeTransition(res, rideId, targetState, additionalFields = {}
       // If ride is completed, increment passenger total_rides count and release driver back to AVAILABLE
       // ALSO update driver's current location to ride destination (e.g. from Vastrapur to GIFT City)!
       if (targetState === RIDE_STATES.COMPLETED) {
+        // Revoke all remaining OFFERED assignments for this ride and any cancelled rides so they never go to other drivers
+        await client.query(
+          `UPDATE ride_assignments 
+           SET status = 'REVOKED', responded_at = NOW() 
+           WHERE (ride_id = $1 OR ride_id IN (SELECT id FROM rides WHERE passenger_id = $2)) AND status = 'OFFERED'`,
+          [rideId, updatedRide.passenger_id]
+        );
+        await client.query(
+          `UPDATE drivers 
+           SET status = 'AVAILABLE', updated_at = NOW() 
+           WHERE id IN (
+             SELECT driver_id FROM ride_assignments 
+             WHERE (ride_id = $1 OR ride_id IN (SELECT id FROM rides WHERE passenger_id = $2)) AND status = 'REVOKED'
+           ) AND status = 'RESERVED'`,
+          [rideId, updatedRide.passenger_id]
+        );
+
         if (updatedRide.passenger_id) {
+          // If a ride is completed (especially a rescue ride), cancel ALL other non-completed rides for this passenger
+          await client.query(
+            `UPDATE rides 
+             SET status = 'CANCELLED', cancellation_reason = 'RESCUE_COMPLETED', updated_at = NOW() 
+             WHERE passenger_id = $1 AND id != $2 AND status NOT IN ('COMPLETED', 'CANCELLED')`,
+            [updatedRide.passenger_id, rideId]
+          );
+
+          // Also cancel any aborted SOS rides for this passenger so old rides never linger
+          await client.query(
+            `UPDATE rides 
+             SET status = 'CANCELLED', cancellation_reason = 'RESCUE_COMPLETED', updated_at = NOW() 
+             WHERE passenger_id = $1 AND status = 'ABORTED_SOS'`,
+            [updatedRide.passenger_id]
+          );
+
+          // Mark any active SOS incidents associated with this passenger or ride as RESOLVED
+          await client.query(
+            `UPDATE sos_incidents 
+             SET status = 'RESOLVED', resolved_at = NOW(), updated_at = NOW() 
+             WHERE (passenger_id = $1 OR ride_id = $2 OR rescue_ride_id = $2) AND status = 'ACTIVE'`,
+            [updatedRide.passenger_id, rideId]
+          );
+
+          // If a rescue ride is completed, ensure any offending flagged drivers are immediately purged from database
+          if (updatedRide.is_free_rescue) {
+            const incRes = await client.query(
+              'SELECT driver_id FROM sos_incidents WHERE (rescue_ride_id = $1 OR passenger_id = $2) AND driver_id IS NOT NULL',
+              [rideId, updatedRide.passenger_id]
+            );
+            for (const inc of incRes.rows) {
+              if (inc.driver_id) {
+                const drv = await client.query('SELECT user_id FROM drivers WHERE id = $1', [inc.driver_id]);
+                const uId = drv.rows[0]?.user_id;
+                await client.query('DELETE FROM drivers WHERE id = $1', [inc.driver_id]);
+                if (uId) await client.query('DELETE FROM users WHERE id = $1', [uId]);
+              }
+            }
+          }
+
           await client.query(
             `UPDATE passengers SET total_rides = total_rides + 1 WHERE id = $1`,
             [updatedRide.passenger_id]
@@ -317,76 +410,125 @@ async function executeTransition(res, rideId, targetState, additionalFields = {}
   });
 }
 
+// GET /api/v1/rides/pricing/surge - Fetch active surge pricing multiplier
+router.get('/pricing/surge', async (req, res) => {
+  const multiplier = await getSurgeMultiplier();
+  res.json({
+    success: true,
+    data: {
+      multiplier,
+      base_fare: Number((50 * multiplier).toFixed(2)),
+      per_km_rate: Number((18.5 * multiplier).toFixed(2)),
+      is_surge: multiplier > 1.0,
+    },
+  });
+});
+
+// PUT /api/v1/rides/pricing/surge - Update live surge pricing multiplier and broadcast to all portals
+router.put('/pricing/surge', async (req, res) => {
+  const { multiplier } = req.body || {};
+  if (multiplier === undefined || Number.isNaN(Number(multiplier))) {
+    return res.status(400).json({ success: false, error: 'ValidationError', message: 'Valid multiplier (1.0 - 3.0) required' });
+  }
+
+  const updated = await setSurgeMultiplier(multiplier);
+  const payload = {
+    multiplier: updated,
+    base_fare: Number((50 * updated).toFixed(2)),
+    per_km_rate: Number((18.5 * updated).toFixed(2)),
+    is_surge: updated > 1.0,
+    updated_at: new Date().toISOString(),
+  };
+
+  logger.info({ multiplier: updated }, '⚡ Admin updated dynamic Surge Pricing Multiplier');
+  publishRealtimeEvent(null, 'pricing:surge:updated', payload);
+
+  res.json({
+    success: true,
+    message: `Surge pricing multiplier updated to ${updated.toFixed(1)}x`,
+    data: payload,
+  });
+});
+
 // GET /api/v1/rides - Query and filter rides (Cached with TTL 20s)
 router.get('/', async (req, res) => {
   try {
     const { status, passenger_id, driver_id, limit = 50, page = 1 } = req.query;
-  const cacheKey = `cache:rides:list:${status || 'all'}:${passenger_id || 'all'}:${driver_id || 'all'}:${limit}:${page}`;
+    const cacheKey = `cache:rides:list:${status || 'all'}:${passenger_id || 'all'}:${driver_id || 'all'}:${limit}:${page}`;
 
-  // 1. Check Redis Cache
-  const cachedList = await getCache(cacheKey);
-  if (cachedList) {
-    res.setHeader('X-Cache', 'HIT');
-    return res.json({
-      success: true,
-      total: cachedList.length,
-      source: 'Redis-Cache',
-      data: cachedList,
-    });
-  }
+    // 1. Check Redis Cache
+    const cachedList = await getCache(cacheKey);
+    if (cachedList) {
+      res.setHeader('X-Cache', 'HIT');
+      return res.json({
+        success: true,
+        total: cachedList.length,
+        source: 'Redis-Cache',
+        data: cachedList,
+      });
+    }
 
-  res.setHeader('X-Cache', 'MISS');
+    res.setHeader('X-Cache', 'MISS');
 
-  // 2. Cache Miss: Query Database
-  if (isDbConnected()) {
-    try {
-      let sql = `
-        SELECT r.*, d.name as driver_name, d.phone as driver_phone, d.vehicle_model, d.license_plate, d.rating as driver_rating
+    // 2. Cache Miss: Query Database
+    if (isDbConnected()) {
+      try {
+        let sql = `
+        SELECT r.*, 
+               d.name as driver_name, d.phone as driver_phone, d.vehicle_model, d.license_plate, d.rating as driver_rating,
+               p_user.name as passenger_name, p_user.phone as passenger_phone,
+               COALESCE(
+                 (SELECT json_agg(json_build_object('driver_id', ra.driver_id, 'status', ra.status, 'offered_at', ra.offered_at, 'responded_at', ra.responded_at))
+                  FROM ride_assignments ra WHERE ra.ride_id = r.id),
+                 '[]'::json
+               ) as assignments
         FROM rides r
         LEFT JOIN (
           SELECT dr.id, u.name, u.phone, dr.vehicle_model, dr.license_plate, dr.rating
           FROM drivers dr
           JOIN users u ON dr.user_id = u.id
         ) d ON r.driver_id = d.id
+        LEFT JOIN passengers p ON r.passenger_id = p.id
+        LEFT JOIN users p_user ON p.user_id = p_user.id
         WHERE 1=1
       `;
-      const params = [];
+        const params = [];
 
-      if (status) {
-        params.push(status);
-        sql += ` AND r.status = $${params.length}`;
+        if (status) {
+          params.push(status);
+          sql += ` AND r.status = $${params.length}`;
+        }
+        if (passenger_id) {
+          params.push(passenger_id);
+          sql += ` AND r.passenger_id = $${params.length}`;
+        }
+        if (driver_id) {
+          params.push(driver_id);
+          sql += ` AND (r.driver_id = $${params.length} OR r.id IN (SELECT ride_id FROM ride_assignments WHERE driver_id = $${params.length}))`;
+        }
+
+        sql += ` ORDER BY r.updated_at DESC LIMIT $${params.length + 1} OFFSET $${params.length + 2}`;
+        params.push(parseInt(limit, 10), (parseInt(page, 10) - 1) * parseInt(limit, 10));
+
+        const result = await query(sql, params);
+        await setCache(cacheKey, result.rows, 20);
+
+        return res.json({
+          success: true,
+          total: result.rowCount,
+          source: 'PostgreSQL',
+          data: result.rows,
+        });
+      } catch (err) {
+        logger.error(err, 'PostgreSQL error querying rides');
       }
-      if (passenger_id) {
-        params.push(passenger_id);
-        sql += ` AND r.passenger_id = $${params.length}`;
-      }
-      if (driver_id) {
-        params.push(driver_id);
-        sql += ` AND r.driver_id = $${params.length}`;
-      }
-
-      sql += ` ORDER BY r.updated_at DESC LIMIT $${params.length + 1} OFFSET $${params.length + 2}`;
-      params.push(parseInt(limit, 10), (parseInt(page, 10) - 1) * parseInt(limit, 10));
-
-      const result = await query(sql, params);
-      await setCache(cacheKey, result.rows, 20);
-
-      return res.json({
-        success: true,
-        total: result.rowCount,
-        source: 'PostgreSQL',
-        data: result.rows,
-      });
-    } catch (err) {
-      logger.error(err, 'PostgreSQL error querying rides');
     }
-  }
 
-  let filtered = [...ridesStore];
-  if (status) filtered = filtered.filter(r => r.status === status);
-  if (passenger_id) filtered = filtered.filter(r => r.passenger_id === passenger_id);
-  if (driver_id) filtered = filtered.filter(r => r.driver_id === driver_id);
-  filtered.sort((a, b) => new Date(b.updated_at) - new Date(a.updated_at));
+    let filtered = [...ridesStore];
+    if (status) filtered = filtered.filter(r => r.status === status);
+    if (passenger_id) filtered = filtered.filter(r => r.passenger_id === passenger_id);
+    if (driver_id) filtered = filtered.filter(r => r.driver_id === driver_id);
+    filtered.sort((a, b) => new Date(b.updated_at) - new Date(a.updated_at));
 
     await setCache(cacheKey, filtered, 20);
 
@@ -408,14 +550,15 @@ router.post('/', async (req, res) => {
     const validated = createRideSchema.parse(req.body);
     const rideId = `ride-${Date.now()}-${Math.random().toString(36).substring(2, 7)}`;
 
-    // Calculate distance and dynamic fare
+    // Calculate distance and dynamic surge-adjusted fare
     const distanceKm = calculateHaversineDistance(
       validated.pickup_latitude,
       validated.pickup_longitude,
       validated.destination_latitude,
       validated.destination_longitude
     );
-    const fare = calculateFare(distanceKm);
+    const surgeMultiplier = await getSurgeMultiplier();
+    const fare = calculateFare(distanceKm, surgeMultiplier);
 
     let createdRide = null;
 
@@ -516,7 +659,7 @@ router.post('/', async (req, res) => {
 
     return res.status(201).json({
       success: true,
-      message: dispatchResult?.dispatched 
+      message: dispatchResult?.dispatched
         ? `Ride created! Nearest driver (${dispatchResult.driver.name}, ${dispatchResult.driver.distance_km}km) atomically reserved.`
         : 'Ride created! System searching for nearby drivers.',
       source: isDbConnected() ? 'PostgreSQL' : 'InMemoryStore',
@@ -610,6 +753,76 @@ router.get('/:id', async (req, res) => {
   }
   await setCache(cacheKey, ride, 30);
   res.json({ success: true, source: 'InMemoryStore', data: ride });
+});
+
+// POST /api/v1/rides/:id/rate - Rate driver for a completed ride
+router.post('/:id/rate', async (req, res) => {
+  try {
+    const rawRating = parseFloat(req.body.rating);
+    if (isNaN(rawRating) || rawRating < 1 || rawRating > 5) {
+      return res.status(400).json({
+        success: false,
+        error: 'ValidationError',
+        message: 'Rating must be a numeric score between 1 and 5'
+      });
+    }
+    const submittedRating = Math.max(1, Math.min(5, rawRating));
+    const comment = req.body.comment || '';
+
+    let driverId = req.body.driver_id;
+    if (isDbConnected()) {
+      try {
+        if (!driverId) {
+          const rideRes = await query('SELECT driver_id FROM rides WHERE id = $1', [req.params.id]);
+          if (rideRes.rows.length > 0) {
+            driverId = rideRes.rows[0].driver_id;
+          }
+        }
+
+        if (driverId) {
+          const findDriver = await query('SELECT * FROM drivers WHERE id = $1', [driverId]);
+          if (findDriver.rows.length > 0) {
+            const currentDriver = findDriver.rows[0];
+            const currentRating = parseFloat(currentDriver.rating) || 5.0;
+            const currentCount = parseInt(currentDriver.total_ratings, 10) || 5;
+
+            const newCount = currentCount + 1;
+            const newRating = Number(((currentRating * currentCount + submittedRating) / newCount).toFixed(2));
+
+            await query(
+              'UPDATE drivers SET rating = $1, total_ratings = $2, updated_at = NOW() WHERE id = $3',
+              [newRating, newCount, driverId]
+            );
+
+            return res.json({
+              success: true,
+              message: `Driver overall rating successfully updated to ${newRating.toFixed(2)}`,
+              data: {
+                driverId,
+                rating: newRating,
+                totalRatings: newCount,
+                previousRating: currentRating,
+                submittedRating,
+                comment,
+                rideId: req.params.id
+              }
+            });
+          }
+        }
+      } catch (err) {
+        logger.error(err, 'Error updating driver rating from ride');
+      }
+    }
+
+    res.json({
+      success: true,
+      message: 'Rating submitted',
+      data: { rating: submittedRating, comment, rideId: req.params.id }
+    });
+  } catch (err) {
+    logger.error(err, 'Error rating ride');
+    res.status(500).json({ success: false, error: 'InternalServerError' });
+  }
 });
 
 // POST /api/v1/rides/:id/cancel - Cancel Ride (Releases driver if assigned & invalidates cache)

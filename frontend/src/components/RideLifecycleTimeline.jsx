@@ -30,6 +30,15 @@ const RideLifecycleTimeline = ({ currentStatus }) => {
     );
   }
 
+  if (currentStatus === 'ABORTED_SOS') {
+    return (
+      <div className="timeline-cancelled-banner" style={{ background: '#FEF2F2', borderColor: '#F87171', color: '#991B1B' }}>
+        <XCircle size={18} style={{ color: '#DC2626' }} />
+        <span>Ride Aborted (Emergency SOS Protocol) • Re-routing to Nearest Rescue Driver</span>
+      </div>
+    );
+  }
+
   const currentStepIndex = STEPS.findIndex(s => s.key === currentStatus);
 
   return (

@@ -1,0 +1,207 @@
+.admin-fleet-map-wrapper {
+  background: #ffffff;
+  border: 1px solid var(--slate-200);
+  border-radius: var(--radius-lg);
+  overflow: hidden;
+  box-shadow: 0 4px 16px rgba(15, 23, 42, 0.05);
+  margin-bottom: 1.5rem;
+}
+
+.admin-map-toolbar {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 0.85rem 1.25rem;
+  background: #F8FAFC;
+  border-bottom: 1px solid var(--slate-200);
+  flex-wrap: wrap;
+  gap: 0.75rem;
+}
+
+.map-toolbar-left {
+  display: flex;
+  align-items: center;
+  gap: 1.25rem;
+  flex-wrap: wrap;
+}
+
+.map-live-badge {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  font-weight: 700;
+  font-size: 0.95rem;
+  color: var(--slate-800);
+}
+
+.live-dot {
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  background: #10B981;
+}
+
+.live-dot.pulse {
+  animation: mapPulse 2s infinite;
+}
+
+@keyframes mapPulse {
+  0% { transform: scale(0.95); box-shadow: 0 0 0 0 rgba(16, 185, 129, 0.7); }
+  70% { transform: scale(1); box-shadow: 0 0 0 6px rgba(16, 185, 129, 0); }
+  100% { transform: scale(0.95); box-shadow: 0 0 0 0 rgba(16, 185, 129, 0); }
+}
+
+.filter-pill-group {
+  display: flex;
+  align-items: center;
+  gap: 0.35rem;
+  flex-wrap: wrap;
+}
+
+.filter-pill {
+  font-size: 0.75rem;
+  font-weight: 600;
+  padding: 0.25rem 0.65rem;
+  border-radius: 20px;
+  border: 1px solid var(--slate-300);
+  background: #ffffff;
+  color: var(--slate-600);
+  cursor: pointer;
+  transition: all 0.15s ease;
+}
+
+.filter-pill:hover {
+  background: var(--slate-100);
+  color: var(--slate-900);
+}
+
+.filter-pill.active {
+  background: var(--slate-900);
+  color: #ffffff;
+  border-color: var(--slate-900);
+}
+
+.filter-pill.pill-available.active {
+  background: #059669;
+  border-color: #059669;
+}
+
+.filter-pill.pill-ontrip.active {
+  background: #D97706;
+  border-color: #D97706;
+}
+
+.filter-pill.pill-pending.active {
+  background: #CA8A04;
+  border-color: #CA8A04;
+}
+
+.map-toolbar-right {
+  display: flex;
+  align-items: center;
+  gap: 1rem;
+}
+
+.route-toggle-label {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+  font-size: 0.8rem;
+  font-weight: 600;
+  color: var(--slate-700);
+  cursor: pointer;
+  user-select: none;
+}
+
+.admin-leaflet-container {
+  width: 100%;
+  position: relative;
+  z-index: 10;
+}
+
+/* Custom DivIcons */
+.admin-driver-marker-wrapper {
+  background: transparent !important;
+  border: none !important;
+}
+
+.admin-car-marker {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  width: 38px;
+  height: 38px;
+  border-radius: 50%;
+  color: #ffffff;
+  box-shadow: 0 4px 10px rgba(0, 0, 0, 0.25);
+  position: relative;
+  transition: transform 0.2s ease;
+}
+
+.admin-car-marker:hover {
+  transform: scale(1.15);
+  z-index: 1000;
+}
+
+.admin-car-marker.available {
+  background: #10B981;
+  border: 2px solid #ffffff;
+}
+
+.admin-car-marker.ontrip {
+  background: #F59E0B;
+  border: 2px solid #ffffff;
+}
+
+.admin-car-marker.offline {
+  background: #64748B;
+  border: 2px solid #ffffff;
+}
+
+.admin-car-marker.pending {
+  background: #EAB308;
+  border: 2px solid #ffffff;
+  animation: pulseAmber 1.8s infinite;
+}
+
+@keyframes pulseAmber {
+  0% { box-shadow: 0 0 0 0 rgba(234, 179, 8, 0.7); }
+  70% { box-shadow: 0 0 0 8px rgba(234, 179, 8, 0); }
+  100% { box-shadow: 0 0 0 0 rgba(234, 179, 8, 0); }
+}
+
+.marker-caption {
+  position: absolute;
+  bottom: -16px;
+  background: rgba(15, 23, 42, 0.85);
+  color: #ffffff;
+  font-size: 0.65rem;
+  font-weight: 700;
+  padding: 1px 4px;
+  border-radius: 4px;
+  white-space: nowrap;
+  pointer-events: none;
+}
+
+.admin-map-popup {
+  font-size: 0.85rem;
+  line-height: 1.4;
+  color: var(--slate-800);
+}
+
+.admin-map-popup .popup-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 0.75rem;
+  border-bottom: 1px solid var(--slate-200);
+  padding-bottom: 0.4rem;
+  margin-bottom: 0.4rem;
+}
+
+.admin-map-popup .popup-body {
+  display: flex;
+  flex-direction: column;
+  gap: 0.2rem;
+}

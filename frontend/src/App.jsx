@@ -1,8 +1,7 @@
 import React from 'react';
-import { BrowserRouter as Router, Routes, Route } from 'react-router-dom';
+import { BrowserRouter as Router, Routes, Route, Navigate } from 'react-router-dom';
 import { AuthProvider } from './context/AuthContext';
 import Navbar from './components/Navbar';
-import Footer from './components/Footer';
 import ProtectedRoute from './components/ProtectedRoute';
 import Home from './pages/Home';
 import PassengerPortal from './pages/PassengerPortal';
@@ -13,6 +12,20 @@ import AuthPage from './pages/AuthPage';
 import NotFound from './pages/NotFound';
 import './styles/global.css';
 
+const PortAwareRoot = () => {
+  const port = window.location.port;
+  if (port === '3003') {
+    return <Navigate to="/passenger" replace />;
+  }
+  if (port === '3002') {
+    return <Navigate to="/admin" replace />;
+  }
+  if (port === '3001') {
+    return <Navigate to="/driver" replace />;
+  }
+  return <Home />;
+};
+
 function App() {
   return (
     <AuthProvider>
@@ -21,7 +34,7 @@ function App() {
           <Navbar />
           <main style={{ flex: 1 }}>
             <Routes>
-              <Route path="/" element={<Home />} />
+              <Route path="/" element={<PortAwareRoot />} />
               <Route path="/auth" element={<AuthPage />} />
               
               {/* Role-Based Protected Routes */}
@@ -54,7 +67,6 @@ function App() {
               <Route path="*" element={<NotFound />} />
             </Routes>
           </main>
-          <Footer />
         </div>
       </Router>
     </AuthProvider>

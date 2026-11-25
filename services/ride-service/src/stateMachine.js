@@ -14,6 +14,8 @@ export const RIDE_STATES = {
   IN_PROGRESS: 'IN_PROGRESS',
   COMPLETED: 'COMPLETED',
   CANCELLED: 'CANCELLED',
+  ABORTED_SOS: 'ABORTED_SOS',
+  RESCUE_RIDE: 'RESCUE_RIDE',
 };
 
 // Step index for UI timeline visualization
@@ -31,12 +33,14 @@ export const RIDE_LIFECYCLE_STEPS = [
 export const VALID_TRANSITIONS = {
   [RIDE_STATES.REQUESTED]: [RIDE_STATES.PENDING, RIDE_STATES.DRIVER_ASSIGNED, RIDE_STATES.CANCELLED],
   [RIDE_STATES.PENDING]: [RIDE_STATES.DRIVER_ASSIGNED, RIDE_STATES.CANCELLED],
-  [RIDE_STATES.DRIVER_ASSIGNED]: [RIDE_STATES.DRIVER_ACCEPTED, RIDE_STATES.PENDING, RIDE_STATES.CANCELLED],
-  [RIDE_STATES.DRIVER_ACCEPTED]: [RIDE_STATES.DRIVER_ARRIVED, RIDE_STATES.CANCELLED],
-  [RIDE_STATES.DRIVER_ARRIVED]: [RIDE_STATES.IN_PROGRESS, RIDE_STATES.CANCELLED],
-  [RIDE_STATES.IN_PROGRESS]: [RIDE_STATES.COMPLETED],
+  [RIDE_STATES.DRIVER_ASSIGNED]: [RIDE_STATES.DRIVER_ACCEPTED, RIDE_STATES.PENDING, RIDE_STATES.CANCELLED, 'ABORTED_SOS'],
+  [RIDE_STATES.DRIVER_ACCEPTED]: [RIDE_STATES.DRIVER_ARRIVED, RIDE_STATES.CANCELLED, 'ABORTED_SOS'],
+  [RIDE_STATES.DRIVER_ARRIVED]: [RIDE_STATES.IN_PROGRESS, RIDE_STATES.CANCELLED, 'ABORTED_SOS'],
+  [RIDE_STATES.IN_PROGRESS]: [RIDE_STATES.COMPLETED, 'ABORTED_SOS'],
   [RIDE_STATES.COMPLETED]: [], // Terminal state
   [RIDE_STATES.CANCELLED]: [], // Terminal state
+  ['ABORTED_SOS']: [], // Terminal emergency state
+  ['RESCUE_RIDE']: [],
 };
 
 // States eligible for passenger cancellation
@@ -88,13 +92,15 @@ export function calculateHaversineDistance(lat1, lon1, lat2, lon2) {
 
 /**
  * Dynamic Fare Calculation
- * Formula: Base Fare (₹50) + (Distance * ₹18.50/km)
+ * Formula: (Base Fare (₹50) + (Distance * ₹18.50/km)) * Surge Multiplier
  * @param {number} distanceKm 
+ * @param {number} surgeMultiplier
  * @returns {number}
  */
-export function calculateFare(distanceKm) {
+export function calculateFare(distanceKm, surgeMultiplier = 1.0) {
   const BASE_FARE = 50.00;
   const PER_KM_RATE = 18.50;
-  const computed = BASE_FARE + (distanceKm * PER_KM_RATE);
-  return Number(Math.max(BASE_FARE, computed).toFixed(2));
+  const mult = Math.min(3.0, Math.max(1.0, Number(surgeMultiplier) || 1.0));
+  const computed = (BASE_FARE + (distanceKm * PER_KM_RATE)) * mult;
+  return Number(Math.max(BASE_FARE * mult, computed).toFixed(2));
 }

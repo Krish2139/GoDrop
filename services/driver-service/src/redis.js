@@ -135,3 +135,18 @@ export async function invalidatePattern(pattern) {
   }
 }
 
+/**
+ * Publish distributed realtime event via Redis Pub/Sub to Socket.IO clients
+ */
+export async function publishRealtimeEvent(room, event, data) {
+  if (!isRedisConnected() || !redisClient) return false;
+  try {
+    await redisClient.publish('rideflow:realtime:events', JSON.stringify({ room, event, data }));
+    return true;
+  } catch (err) {
+    logger.warn({ room, event, error: err.message }, 'Failed to publish realtime event to Redis from Driver Service');
+    return false;
+  }
+}
+
+

@@ -2,12 +2,44 @@ import express from 'express';
 import cors from 'cors';
 import dotenv from 'dotenv';
 import ridesRouter from './routes/rides.js';
+import sosRouter from './routes/sos.js';
 import { logger } from './logger.js';
 import { isRedisConnected, rideCacheMetrics, getRedisClient } from './redis.js';
 import { initRabbitMQ, isRabbitConnected, rabbitMetrics } from './rabbitmq.js';
 import { startOutboxPublisher, stopOutboxPublisher, outboxMetrics } from './outboxPublisher.js';
+import { expireOffer } from './dispatchEngine.js';
+import { isDbConnected, pool } from './db.js';
 
 dotenv.config();
+
+let offerExpiryInterval = null;
+
+export function startOfferExpirationWorker(intervalMs = 3000) {
+  if (offerExpiryInterval) return;
+  offerExpiryInterval = setInterval(async () => {
+    try {
+      if (isDbConnected()) {
+        const expiredRes = await pool.query(
+          `SELECT DISTINCT ride_id FROM ride_assignments 
+           WHERE status = 'OFFERED' AND expires_at < NOW()`
+        );
+        for (const row of expiredRes.rows) {
+          logger.info({ rideId: row.ride_id }, '⏰ Expired offer detected. Triggering auto-cascading dispatch...');
+          await expireOffer(row.ride_id);
+        }
+      }
+    } catch (err) {
+      logger.error(err, 'Error in offer expiration background worker');
+    }
+  }, intervalMs);
+}
+
+export function stopOfferExpirationWorker() {
+  if (offerExpiryInterval) {
+    clearInterval(offerExpiryInterval);
+    offerExpiryInterval = null;
+  }
+}
 
 const app = express();
 const PORT = process.env.RIDE_SERVICE_PORT || 5001;
@@ -99,6 +131,10 @@ app.get('/api/v1/metrics', async (req, res) => {
 
 // Domain routes
 app.use('/api/v1/rides', ridesRouter);
+app.use('/api/v1/sos', sosRouter);
+app.use('/api/sos', sosRouter);
+app.use('/api/v1/admin/sos', sosRouter);
+app.use('/api/admin/sos', sosRouter);
 
 // 404 handler
 app.use((req, res) => {
@@ -124,12 +160,14 @@ const server = app.listen(PORT, async () => {
   // Initialize RabbitMQ connection & Start Transactional Outbox Publisher
   await initRabbitMQ();
   startOutboxPublisher(1500);
+  startOfferExpirationWorker(3000);
 });
 
 // Graceful shutdown
 process.on('SIGTERM', () => {
   logger.info('SIGTERM received. Closing Ride Service gracefully...');
   stopOutboxPublisher();
+  stopOfferExpirationWorker();
   server.close(() => {
     logger.info('Ride Service closed.');
     process.exit(0);

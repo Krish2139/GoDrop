@@ -27,8 +27,8 @@ ON CONFLICT (id) DO UPDATE SET
 -- 2. Insert Passengers
 INSERT INTO passengers (id, user_id, rating, total_rides)
 VALUES 
-    ('pass-seed-1', 'user-pass-1', 4.90, 18),
-    ('pass-seed-2', 'user-pass-2', 4.85, 9)
+    ('pass-seed-1', 'user-pass-1', 4.90, 0),
+    ('pass-seed-2', 'user-pass-2', 4.85, 0)
 ON CONFLICT (id) DO NOTHING;
 
 -- 3. Insert Drivers with Realistic Simulated GPS Coordinates in Ahmedabad, Gujarat

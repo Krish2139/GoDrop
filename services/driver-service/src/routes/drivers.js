@@ -8,7 +8,8 @@ import {
   invalidateKey, 
   invalidatePattern, 
   driverCacheMetrics,
-  isRedisConnected 
+  isRedisConnected,
+  publishRealtimeEvent
 } from '../redis.js';
 
 const router = express.Router();
@@ -31,6 +32,7 @@ export const driversStore = [
     license_plate: 'GJ-01-AB-1234',
     rating: 4.85,
     status: DRIVER_STATUS.AVAILABLE,
+    approval_status: 'APPROVED',
     current_latitude: 23.0275,
     current_longitude: 72.5076,
     heading: 90,
@@ -45,6 +47,7 @@ export const driversStore = [
     license_plate: 'GJ-01-CD-5678',
     rating: 4.92,
     status: DRIVER_STATUS.AVAILABLE,
+    approval_status: 'APPROVED',
     current_latitude: 23.0373,
     current_longitude: 72.5303,
     heading: 180,
@@ -59,6 +62,7 @@ export const driversStore = [
     license_plate: 'GJ-01-EF-9012',
     rating: 4.70,
     status: DRIVER_STATUS.OFFLINE,
+    approval_status: 'APPROVED',
     current_latitude: 23.0372,
     current_longitude: 72.5613,
     heading: 0,
@@ -144,13 +148,17 @@ router.get('/', async (req, res) => {
   // 2. Cache Miss: Fetch from PostgreSQL / Memory
   if (isDbConnected()) {
     try {
-      let sql = 'SELECT * FROM drivers';
+      let sql = `
+        SELECT d.*, u.name, u.email, u.phone 
+        FROM drivers d 
+        LEFT JOIN users u ON d.user_id = u.id
+      `;
       const params = [];
       if (status) {
         params.push(status);
-        sql += ' WHERE status = $1';
+        sql += ' WHERE d.status = $1';
       }
-      sql += ' ORDER BY updated_at DESC';
+      sql += ' ORDER BY d.updated_at DESC';
 
       const result = await query(sql, params);
       await setCache(cacheKey, result.rows, 45);
@@ -214,15 +222,18 @@ router.get('/nearby', async (req, res) => {
 
   if (isDbConnected()) {
     try {
-      const dbRes = await query('SELECT * FROM drivers WHERE status = $1', [DRIVER_STATUS.AVAILABLE]);
+      const dbRes = await query(
+        "SELECT * FROM drivers WHERE status = $1 AND (approval_status = 'APPROVED' OR approval_status IS NULL)",
+        [DRIVER_STATUS.AVAILABLE]
+      );
       candidates = dbRes.rows;
       source = 'PostgreSQL';
     } catch (err) {
       logger.error(err, 'PostgreSQL error querying nearby drivers');
-      candidates = driversStore.filter(d => d.status === DRIVER_STATUS.AVAILABLE);
+      candidates = driversStore.filter(d => d.status === DRIVER_STATUS.AVAILABLE && (d.approval_status === 'APPROVED' || !d.approval_status));
     }
   } else {
-    candidates = driversStore.filter(d => d.status === DRIVER_STATUS.AVAILABLE);
+    candidates = driversStore.filter(d => d.status === DRIVER_STATUS.AVAILABLE && (d.approval_status === 'APPROVED' || !d.approval_status));
   }
 
   const ranked = candidates
@@ -273,26 +284,34 @@ router.post('/', async (req, res) => {
 
         const insertRes = await query(
           `INSERT INTO drivers (
-            id, user_id, vehicle_model, license_plate, rating, status, current_latitude, current_longitude, heading
-          ) VALUES ($1, $2, $3, $4, 5.0, $5, $6, $7, 0)
+            id, user_id, vehicle_model, license_plate, rating, status, current_latitude, current_longitude, heading, approval_status
+          ) VALUES ($1, $2, $3, $4, 5.0, $5, $6, $7, 0, 'PENDING')
           RETURNING *`,
           [
             driverId,
             userId,
             validated.vehicle_model,
             validated.license_plate,
-            DRIVER_STATUS.AVAILABLE,
+            DRIVER_STATUS.OFFLINE,
             validated.latitude,
             validated.longitude,
           ]
         );
 
         await invalidateDriverCaches(driverId);
-        logger.info({ driverId }, 'Driver registered in PostgreSQL');
+        await publishRealtimeEvent(null, 'driver:application:submitted', {
+          driverId,
+          name: validated.name,
+          vehicle_model: validated.vehicle_model,
+          license_plate: validated.license_plate,
+          phone: validated.phone,
+          approval_status: 'PENDING'
+        });
+        logger.info({ driverId }, 'Driver registered with PENDING approval in PostgreSQL');
 
         return res.status(201).json({
           success: true,
-          message: 'Driver profile registered successfully',
+          message: 'Driver application submitted successfully. Pending administrator verification.',
           source: 'PostgreSQL',
           data: insertRes.rows[0],
         });
@@ -309,7 +328,8 @@ router.post('/', async (req, res) => {
       vehicle_model: validated.vehicle_model,
       license_plate: validated.license_plate,
       rating: 5.0,
-      status: DRIVER_STATUS.AVAILABLE,
+      status: DRIVER_STATUS.OFFLINE,
+      approval_status: 'PENDING',
       current_latitude: validated.latitude,
       current_longitude: validated.longitude,
       heading: 0,
@@ -318,6 +338,14 @@ router.post('/', async (req, res) => {
 
     driversStore.push(newDriver);
     await invalidateDriverCaches(driverId);
+    await publishRealtimeEvent(null, 'driver:application:submitted', {
+      driverId,
+      name: validated.name,
+      vehicle_model: validated.vehicle_model,
+      license_plate: validated.license_plate,
+      phone: validated.phone,
+      approval_status: 'PENDING'
+    });
 
     res.status(201).json({
       success: true,
@@ -372,12 +400,37 @@ router.get('/profile', async (req, res) => {
       if (result.rows.length > 0) {
         return res.json({ success: true, source: 'PostgreSQL', data: result.rows[0] });
       }
+      if (userId) {
+        return res.status(404).json({
+          success: false,
+          error: 'DriverNotFound',
+          accountSuspended: true,
+          message: 'Driver account not found or has been suspended and removed from the system.',
+        });
+      }
     } catch (err) {
       logger.error(err, 'PostgreSQL error fetching driver profile');
     }
   }
 
-  const driver = userId ? driversStore.find(d => d.user_id === userId) || driversStore[0] : driversStore[0];
+  if (userId && isDbConnected()) {
+    return res.status(404).json({
+      success: false,
+      error: 'DriverNotFound',
+      accountSuspended: true,
+      message: 'Driver account not found or has been suspended and removed from the system.',
+    });
+  }
+
+  const driver = userId ? driversStore.find(d => d.user_id === userId) : driversStore[0];
+  if (!driver) {
+    return res.status(404).json({
+      success: false,
+      error: 'DriverNotFound',
+      accountSuspended: true,
+      message: 'Driver account not found or has been suspended.',
+    });
+  }
   res.json({ success: true, source: 'InMemoryStore', data: driver });
 });
 
@@ -420,6 +473,32 @@ router.patch('/:id/availability', async (req, res) => {
   try {
     const { status } = availabilitySchema.parse(req.body);
 
+    // Verify driver approval status before allowing AVAILABLE status
+    let currentApproval = 'APPROVED';
+    if (isDbConnected()) {
+      try {
+        const chk = await query('SELECT approval_status FROM drivers WHERE id = $1', [req.params.id]);
+        if (chk.rows.length > 0 && chk.rows[0].approval_status) {
+          currentApproval = chk.rows[0].approval_status;
+        }
+      } catch (e) {
+        logger.warn(e, 'Error checking driver approval status from DB');
+      }
+    } else {
+      const memD = driversStore.find(d => d.id === req.params.id);
+      if (memD && memD.approval_status) {
+        currentApproval = memD.approval_status;
+      }
+    }
+
+    if (status === DRIVER_STATUS.AVAILABLE && currentApproval !== 'APPROVED') {
+      return res.status(403).json({
+        success: false,
+        error: 'DriverNotApproved',
+        message: 'Driver account is pending administrator verification. You cannot go online until approved.',
+      });
+    }
+
     if (isDbConnected()) {
       try {
         const updateRes = await query(
@@ -460,6 +539,73 @@ router.patch('/:id/availability', async (req, res) => {
       return res.status(400).json({ success: false, error: 'ValidationError', details: err.errors });
     }
     res.status(500).json({ success: false, error: 'InternalServerError' });
+  }
+});
+
+// PATCH /api/v1/drivers/:id/approval - Admin verify and approve/reject driver
+router.patch('/:id/approval', async (req, res) => {
+  try {
+    const { approval_status } = req.body;
+    if (!['APPROVED', 'REJECTED', 'PENDING'].includes(approval_status)) {
+      return res.status(400).json({
+        success: false,
+        error: 'ValidationError',
+        message: 'approval_status must be APPROVED, REJECTED, or PENDING',
+      });
+    }
+
+    let updatedDriver = null;
+
+    if (isDbConnected()) {
+      try {
+        const updateRes = await query(
+          `UPDATE drivers 
+           SET approval_status = $1::text, 
+               status = CASE WHEN $1::text = 'APPROVED' THEN 'OFFLINE' ELSE status END,
+               updated_at = NOW() 
+           WHERE id = $2 
+           RETURNING *`,
+          [approval_status, req.params.id]
+        );
+        if (updateRes.rows.length > 0) {
+          updatedDriver = updateRes.rows[0];
+        }
+      } catch (err) {
+        logger.error(err, 'PostgreSQL error updating driver approval');
+      }
+    }
+
+    const memDriver = driversStore.find(d => d.id === req.params.id);
+    if (memDriver) {
+      memDriver.approval_status = approval_status;
+      if (approval_status === 'APPROVED' && memDriver.status === DRIVER_STATUS.OFFLINE) {
+        // Ready for driver to go online
+      }
+      memDriver.updated_at = new Date().toISOString();
+      if (!updatedDriver) updatedDriver = memDriver;
+    }
+
+    if (!updatedDriver) {
+      return res.status(404).json({ success: false, error: 'NotFound', message: 'Driver not found' });
+    }
+
+    await invalidateDriverCaches(req.params.id);
+    await publishRealtimeEvent(null, 'driver:approval:updated', {
+      driverId: req.params.id,
+      approval_status,
+      driver: updatedDriver,
+    });
+
+    logger.info({ driverId: req.params.id, approval_status }, 'Driver approval status updated by administrator');
+
+    res.json({
+      success: true,
+      message: `Driver status successfully marked as ${approval_status}`,
+      data: updatedDriver,
+    });
+  } catch (err) {
+    logger.error(err, 'Error in driver approval endpoint');
+    res.status(500).json({ success: false, error: 'InternalServerError', message: err.message });
   }
 });
 
@@ -521,6 +667,103 @@ router.patch('/:id/location', async (req, res) => {
   }
 });
 
+// POST /api/v1/drivers/:id/rate - Rate a driver and update their overall cumulative rating
+router.post('/:id/rate', async (req, res) => {
+  try {
+    const rawRating = parseFloat(req.body.rating);
+    if (isNaN(rawRating) || rawRating < 1 || rawRating > 5) {
+      return res.status(400).json({
+        success: false,
+        error: 'ValidationError',
+        message: 'Rating must be a numeric score between 1 and 5'
+      });
+    }
+    const submittedRating = Math.max(1, Math.min(5, rawRating));
+    const comment = req.body.comment || '';
+    const rideId = req.body.ride_id || null;
+
+    if (isDbConnected()) {
+      try {
+        const findRes = await query('SELECT * FROM drivers WHERE id = $1', [req.params.id]);
+        if (findRes.rows.length > 0) {
+          const currentDriver = findRes.rows[0];
+          const currentRating = parseFloat(currentDriver.rating) || 5.0;
+          const currentCount = parseInt(currentDriver.total_ratings, 10) || 5;
+
+          // Compute new weighted cumulative average
+          const newCount = currentCount + 1;
+          const newRating = Number(((currentRating * currentCount + submittedRating) / newCount).toFixed(2));
+
+          const updateRes = await query(
+            `UPDATE drivers 
+             SET rating = $1, total_ratings = $2, updated_at = NOW() 
+             WHERE id = $3 
+             RETURNING *`,
+            [newRating, newCount, req.params.id]
+          );
+
+          await invalidateDriverCaches(req.params.id);
+
+          logger.info(
+            { driverId: req.params.id, previousRating: currentRating, newRating, newCount, submittedRating },
+            'Driver overall rating updated in PostgreSQL'
+          );
+
+          return res.json({
+            success: true,
+            message: `Driver overall rating successfully updated to ${newRating.toFixed(2)}`,
+            source: 'PostgreSQL',
+            data: {
+              driverId: req.params.id,
+              rating: newRating,
+              totalRatings: newCount,
+              previousRating: currentRating,
+              submittedRating,
+              comment,
+              rideId
+            }
+          });
+        }
+      } catch (err) {
+        logger.error(err, 'PostgreSQL error updating driver rating');
+      }
+    }
+
+    // In-memory fallback
+    const driver = driversStore.find(d => d.id === req.params.id);
+    if (!driver) {
+      return res.status(404).json({ success: false, error: 'NotFound', message: 'Driver not found' });
+    }
+    const currentRating = parseFloat(driver.rating) || 5.0;
+    const currentCount = parseInt(driver.total_ratings, 10) || 5;
+    const newCount = currentCount + 1;
+    const newRating = Number(((currentRating * currentCount + submittedRating) / newCount).toFixed(2));
+
+    driver.rating = newRating;
+    driver.total_ratings = newCount;
+    driver.updated_at = new Date().toISOString();
+    await invalidateDriverCaches(req.params.id);
+
+    res.json({
+      success: true,
+      message: `Driver overall rating successfully updated to ${newRating.toFixed(2)}`,
+      source: 'InMemoryStore',
+      data: {
+        driverId: req.params.id,
+        rating: newRating,
+        totalRatings: newCount,
+        previousRating: currentRating,
+        submittedRating,
+        comment,
+        rideId
+      }
+    });
+  } catch (err) {
+    logger.error(err, 'Error submitting driver rating');
+    res.status(500).json({ success: false, error: 'InternalServerError', message: err.message });
+  }
+});
+
 // GET /api/v1/drivers/:id/offers
 router.get('/:id/offers', async (req, res) => {
   if (isDbConnected()) {
@@ -536,7 +779,10 @@ router.get('/:id/offers', async (req, res) => {
          JOIN rides r ON a.ride_id = r.id
          LEFT JOIN passengers p ON r.passenger_id = p.id
          LEFT JOIN users u ON p.user_id = u.id
-         WHERE a.driver_id = $1 AND a.status = 'OFFERED' AND (a.expires_at > NOW() OR r.status = 'DRIVER_ASSIGNED')
+         WHERE a.driver_id = $1 
+           AND a.status = 'OFFERED' 
+           AND a.expires_at > NOW() 
+           AND r.status IN ('DRIVER_ASSIGNED', 'REQUESTED', 'PENDING')
          ORDER BY a.offered_at DESC`,
         [req.params.id]
       );

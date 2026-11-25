@@ -6,6 +6,8 @@
   "private": true,
   "scripts": {
     "frontend:dev": "npm --prefix frontend run dev",
+    "frontend:passenger": "npm --prefix frontend run dev:passenger",
+    "frontend:driver": "npm --prefix frontend run dev:driver",
     "frontend:build": "npm --prefix frontend run build",
     "gateway:dev": "npm --prefix gateway run dev",
     "ride:dev": "npm --prefix services/ride-service run dev",

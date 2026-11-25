@@ -21,7 +21,7 @@ export function getSocket(token) {
     });
 
     socket.on('connect', () => {
-      console.log('⚡ Connected to RideFlow Real-time Gateway via Socket.IO:', socket.id);
+      console.log('⚡ Connected to GoDrop Real-time Gateway via Socket.IO:', socket.id);
     });
 
     socket.on('connect_error', (err) => {
@@ -126,5 +126,69 @@ export function onAdminDriverTelemetry(callback) {
   if (!s) return () => {};
   s.on('driver:telemetry:update', callback);
   return () => s.off('driver:telemetry:update', callback);
+}
+
+/**
+ * Emit Live Passenger SOS Coordinates
+ */
+export function emitPassengerSosLocation(payload) {
+  const s = getSocket();
+  if (s) {
+    s.emit('sos:passenger:location', payload);
+  }
+}
+
+/**
+ * Subscribe to High-Priority Admin SOS Alerts
+ */
+export function onNewSosAlert(callback) {
+  const s = getSocket();
+  if (!s) return () => {};
+  s.on('NEW_SOS_ALERT', callback);
+  s.on('sos:new_alert', callback);
+  return () => {
+    s.off('NEW_SOS_ALERT', callback);
+    s.off('sos:new_alert', callback);
+  };
+}
+
+/**
+ * Subscribe to Live Passenger SOS Coordinates on Admin Screen
+ */
+export function onSosLiveLocation(callback) {
+  const s = getSocket();
+  if (!s) return () => {};
+  s.on('sos:live_location', callback);
+  return () => s.off('sos:live_location', callback);
+}
+
+/**
+ * Subscribe to Free Rescue Cab Dispatched Notification (Passenger)
+ */
+export function onSosRescueDispatched(callback) {
+  const s = getSocket();
+  if (!s) return () => {};
+  s.on('sos:rescue:dispatched', callback);
+  return () => s.off('sos:rescue:dispatched', callback);
+}
+
+/**
+ * Subscribe to Emergency Account Suspension (Driver)
+ */
+export function onDriverSuspendedSos(callback) {
+  const s = getSocket();
+  if (!s) return () => {};
+  s.on('driver:suspended:sos', callback);
+  return () => s.off('driver:suspended:sos', callback);
+}
+
+/**
+ * Subscribe to Global Surge Pricing Multiplier Updates
+ */
+export function onSurgePricingUpdated(callback) {
+  const s = getSocket();
+  if (!s) return () => {};
+  s.on('pricing:surge:updated', callback);
+  return () => s.off('pricing:surge:updated', callback);
 }
 

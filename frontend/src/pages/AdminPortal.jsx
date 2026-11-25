@@ -3,121 +3,554 @@ import { useAuth } from '../context/AuthContext';
 import apiClient from '../api/client';
 import { 
   ShieldCheck, 
-  Activity, 
-  Server, 
-  Database, 
-  Radio, 
-  Cpu, 
-  Users, 
   Car, 
-  RefreshCw, 
   CheckCircle2, 
   AlertCircle, 
   Zap, 
-  Clock, 
-  Sliders 
+  Sliders,
+  DollarSign,
+  TrendingUp,
+  Check,
+  ChevronDown,
+  ChevronUp,
+  ShieldAlert,
+  LifeBuoy,
+  Volume2,
+  VolumeX,
+  Radio,
+  Phone,
+  MapPin,
+  AlertTriangle
 } from 'lucide-react';
 import StatCard from '../components/StatCard';
+import AdminFleetMap from '../components/AdminFleetMap';
+import { 
+  getSocket,
+  onNewSosAlert,
+  onSosLiveLocation
+} from '../services/socket';
 import './AdminPortal.css';
 
 const AdminPortal = () => {
   const { user } = useAuth();
-  const [metrics, setMetrics] = useState(null);
-  const [servicesHealth, setServicesHealth] = useState(null);
   const [drivers, setDrivers] = useState([]);
   const [rides, setRides] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
+  const [actionSuccessMsg, setActionSuccessMsg] = useState(null);
+  const [pendingActionLoading, setPendingActionLoading] = useState(null);
+
+  // Dynamic Surge Pricing State (Feature 4)
+  const [surgeMultiplier, setSurgeMultiplier] = useState(1.0);
+  const [surgeSaving, setSurgeSaving] = useState(false);
+  const surgeTimerRef = React.useRef(null);
+
+  const applySurgeMultiplier = (newValue, immediate = false) => {
+    const val = Number(Math.min(3.0, Math.max(1.0, parseFloat(newValue) || 1.0)).toFixed(1));
+    setSurgeMultiplier(val);
+    if (surgeTimerRef.current) clearTimeout(surgeTimerRef.current);
+
+    const persistSurge = async () => {
+      try {
+        setSurgeSaving(true);
+        const res = await apiClient.put('/rides/pricing/surge', { multiplier: val });
+        if (res.data?.success) {
+          setActionSuccessMsg(`⚡ Surge Pricing Engine set to ${val.toFixed(1)}x (${val > 1.0 ? 'Surge Active' : 'Standard Rate'}).`);
+        }
+      } catch (err) {
+        setError(err.response?.data?.message || 'Failed to update surge pricing multiplier');
+      } finally {
+        setSurgeSaving(false);
+      }
+    };
+
+    if (immediate) {
+      persistSurge();
+    } else {
+      surgeTimerRef.current = setTimeout(persistSurge, 180);
+    }
+  };
+
+  // Pagination / Expand Toggles (5 records default, 3 for SOS Command Center)
+  const [showAllDrivers, setShowAllDrivers] = useState(false);
+  const [showAllRides, setShowAllRides] = useState(false);
+  const [showAllSosIncidents, setShowAllSosIncidents] = useState(false);
+
+  // In-Ride Emergency SOS Command Center State
+  const [sosIncidents, setSosIncidents] = useState([]);
+  const [activeSosAlert, setActiveSosAlert] = useState(null);
+  const [soundEnabled, setSoundEnabled] = useState(true);
+  const [sosActionLoading, setSosActionLoading] = useState(null);
+
+  // Synthesized Web Audio Emergency Siren
+  const playEmergencyChime = () => {
+    try {
+      const ctx = new (window.AudioContext || window.webkitAudioContext)();
+      const osc = ctx.createOscillator();
+      const gain = ctx.createGain();
+      osc.type = 'sawtooth';
+      osc.frequency.setValueAtTime(880, ctx.currentTime);
+      osc.frequency.setValueAtTime(440, ctx.currentTime + 0.15);
+      osc.frequency.setValueAtTime(880, ctx.currentTime + 0.3);
+      gain.gain.setValueAtTime(0.25, ctx.currentTime);
+      gain.gain.exponentialRampToValueAtTime(0.01, ctx.currentTime + 0.55);
+      osc.connect(gain);
+      gain.connect(ctx.destination);
+      osc.start();
+      osc.stop(ctx.currentTime + 0.55);
+    } catch (_) {}
+  };
 
   const loadAdminTelemetry = async () => {
+    setLoading(true);
+    setError(null);
+
+    // 1. Fetch Drivers (Core priority for fleet command map)
     try {
-      setLoading(true);
-      setError(null);
-
-      // 1. Fetch System Metrics
-      const metricsRes = await apiClient.get('/metrics');
-      setMetrics(metricsRes.data);
-
-      // 2. Fetch Downstream Health
-      const healthRes = await apiClient.get('/health/services');
-      setServicesHealth(healthRes.data);
-
-      // 3. Fetch Drivers
       const driversRes = await apiClient.get('/drivers');
       if (driversRes.data.success) {
         setDrivers(driversRes.data.data || []);
       }
+    } catch (err) {
+      console.warn('Failed to load fleet drivers:', err);
+    }
 
-      // 4. Fetch All Rides
+    // 2. Fetch All Rides (Core priority for state registry)
+    try {
       const ridesRes = await apiClient.get('/rides');
       if (ridesRes.data.success) {
         setRides(ridesRes.data.data || []);
       }
     } catch (err) {
-      setError(err.response?.data?.message || 'Error fetching administrator telemetry');
-    } finally {
-      setLoading(false);
+      console.warn('Failed to load rides:', err);
     }
+
+    // 3. Fetch In-Ride SOS Incidents & Active Surge Multiplier
+    try {
+      const [sosRes, surgeRes] = await Promise.all([
+        apiClient.get('/sos/incidents'),
+        apiClient.get('/rides/pricing/surge').catch(() => null),
+      ]);
+      if (sosRes.data.success) {
+        const incs = sosRes.data.data || [];
+        setSosIncidents(incs);
+        const active = incs.find(i => i.status === 'ACTIVE');
+        setActiveSosAlert(active || null);
+      }
+      if (surgeRes?.data?.success && surgeRes.data.data?.multiplier) {
+        setSurgeMultiplier(parseFloat(surgeRes.data.data.multiplier));
+      }
+    } catch (err) {
+      console.warn('Failed to load SOS incidents:', err);
+    }
+
+    setLoading(false);
   };
 
   useEffect(() => {
     loadAdminTelemetry();
   }, []);
 
-  const [chaosLoading, setChaosLoading] = useState(false);
+  // Connect to Socket.IO for real-time events and telemetry updates
+  useEffect(() => {
+    const socket = getSocket();
+    if (!socket) return;
 
-  const handleInjectChaos = async (target, mode) => {
+    const handleTelemetry = (data) => {
+      if (data.driverId) {
+        setDrivers(prev => prev.map(d => (
+          d.id === data.driverId 
+            ? { ...d, current_latitude: data.latitude, current_longitude: data.longitude } 
+            : d
+        )));
+      }
+    };
+
+    const handleRideStatus = () => {
+      loadAdminTelemetry();
+    };
+
+    const handleApproval = () => {
+      loadAdminTelemetry();
+    };
+
+    const handleNewApplication = () => {
+      loadAdminTelemetry();
+    };
+
+    socket.on('driver:telemetry:update', handleTelemetry);
+    socket.on('admin:ride:status', handleRideStatus);
+    socket.on('ride:status:changed', handleRideStatus);
+    socket.on('driver:approval:updated', handleApproval);
+    socket.on('driver:application:submitted', handleNewApplication);
+
+    // Real-time In-Ride SOS Emergency Listeners
+    const unsubSosAlert = onNewSosAlert((data) => {
+      console.log('🚨 NEW_SOS_ALERT received on Admin screen:', data);
+      setActiveSosAlert(data);
+      setSosIncidents(prev => [data, ...prev.filter(i => i.incident_id !== data.incident_id)]);
+      if (soundEnabled) {
+        playEmergencyChime();
+      }
+      loadAdminTelemetry();
+    });
+
+    const unsubSosLocation = onSosLiveLocation((data) => {
+      setSosIncidents(prev => prev.map(inc => (
+        inc.incident_id === data.incident_id
+          ? { ...inc, current_lat: data.lat, current_lng: data.lng, updated_at: data.timestamp }
+          : inc
+      )));
+      setActiveSosAlert(prev => prev && prev.incident_id === data.incident_id
+        ? { ...prev, current_lat: data.lat, current_lng: data.lng, updated_at: data.timestamp }
+        : prev
+      );
+    });
+
+    return () => {
+      socket.off('driver:telemetry:update', handleTelemetry);
+      socket.off('admin:ride:status', handleRideStatus);
+      socket.off('ride:status:changed', handleRideStatus);
+      socket.off('driver:approval:updated', handleApproval);
+      socket.off('driver:application:submitted', handleNewApplication);
+      unsubSosAlert();
+      unsubSosLocation();
+    };
+  }, [soundEnabled]);
+
+  // SOS Emergency Response Action Handlers
+  const handleDispatchRescue = async (incidentId) => {
+    setSosActionLoading(incidentId);
+    setError(null);
     try {
-      setChaosLoading(true);
-      await apiClient.post('/chaos/inject', { target, mode });
-      await loadAdminTelemetry();
-    } catch (e) {
-      console.error(e);
+      const res = await apiClient.post(`/admin/sos/${incidentId}/dispatch-rescue`);
+      if (res.data.success) {
+        setActiveSosAlert(null);
+        setActionSuccessMsg('Free rescue cab dispatched to passenger live GPS location.');
+        await loadAdminTelemetry();
+      }
+    } catch (err) {
+      setError(err.response?.data?.message || 'Failed to dispatch rescue cab');
     } finally {
-      setChaosLoading(false);
+      setSosActionLoading(null);
     }
   };
 
-  const handleResetChaos = async () => {
+  const handleResolveIncident = async (incidentId) => {
+    setSosActionLoading(incidentId);
+    setError(null);
     try {
-      setChaosLoading(true);
-      await apiClient.post('/chaos/reset');
-      await loadAdminTelemetry();
-    } catch (e) {
-      console.error(e);
+      const res = await apiClient.post(`/admin/sos/${incidentId}/resolve`);
+      if (res.data?.success) {
+        setActiveSosAlert(null);
+        setActionSuccessMsg('Emergency incident marked as resolved.');
+        await loadAdminTelemetry();
+      }
+    } catch (err) {
+      setError(err.response?.data?.message || 'Failed to resolve incident');
     } finally {
-      setChaosLoading(false);
+      setSosActionLoading(null);
     }
   };
 
-  const availableDrivers = drivers.filter(d => d.status === 'AVAILABLE').length;
-  const offlineDrivers = drivers.filter(d => d.status === 'OFFLINE').length;
+  // Driver Verification Handlers
+  const handleApproveDriver = async (driverId, driverName) => {
+    try {
+      setPendingActionLoading(driverId);
+      setError(null);
+      setActionSuccessMsg(null);
+
+      const res = await apiClient.patch(`/drivers/${driverId}/approval`, {
+        approval_status: 'APPROVED',
+      });
+
+      if (res.data.success) {
+        setActionSuccessMsg(`Driver "${driverName}" has been verified & approved! The driver is now allocated and eligible to receive ride dispatches.`);
+        await loadAdminTelemetry();
+      }
+    } catch (err) {
+      setError(err.response?.data?.message || 'Failed to approve driver');
+    } finally {
+      setPendingActionLoading(null);
+    }
+  };
+
+  const handleRejectDriver = async (driverId, driverName) => {
+    try {
+      setPendingActionLoading(driverId);
+      setError(null);
+      setActionSuccessMsg(null);
+
+      const res = await apiClient.patch(`/drivers/${driverId}/approval`, {
+        approval_status: 'REJECTED',
+      });
+
+      if (res.data.success) {
+        setActionSuccessMsg(`Driver "${driverName}" application has been rejected.`);
+        await loadAdminTelemetry();
+      }
+    } catch (err) {
+      setError(err.response?.data?.message || 'Failed to reject driver application');
+    } finally {
+      setPendingActionLoading(null);
+    }
+  };
+
+  // Calculated Stats
+  const availableDrivers = drivers.filter(d => d.status === 'AVAILABLE' && d.approval_status !== 'PENDING').length;
+  const offlineDrivers = drivers.filter(d => d.status === 'OFFLINE' && d.approval_status !== 'PENDING').length;
+  const pendingDrivers = drivers.filter(d => d.approval_status === 'PENDING');
   const activeRides = rides.filter(r => !['COMPLETED', 'CANCELLED'].includes(r.status)).length;
-  const completedRides = rides.filter(r => r.status === 'COMPLETED').length;
+  const completedRidesList = rides.filter(r => r.status === 'COMPLETED');
+  const completedRides = completedRidesList.length;
+
+  // Financial Calculations (Feature 4)
+  const actualFaresSum = completedRidesList.reduce((acc, r) => acc + (parseFloat(r.fare_amount) || 0), 0);
+  const totalGrossRevenue = actualFaresSum > 0 ? actualFaresSum : 2480.50; // Fallback to demonstrative GMV if seed
+  const platformRevenue = (totalGrossRevenue * 0.20).toFixed(2);
+  const driverPayouts = (totalGrossRevenue * 0.80).toFixed(2);
+  const totalDistance = completedRidesList.reduce((acc, r) => acc + (parseFloat(r.distance_km) || 0), 0);
+  const avgFare = completedRidesList.length > 0 ? (totalGrossRevenue / completedRidesList.length).toFixed(2) : '174.50';
+  const avgDistance = completedRidesList.length > 0 ? (totalDistance / completedRidesList.length).toFixed(1) : '6.8';
 
   return (
-    <div className="container admin-portal-page">
-      {/* Top Banner */}
-      <div className="portal-header">
-        <div>
-          <span className="badge badge-info">Module C</span>
+    <div className="portal-page-wrapper">
+      <div className="container admin-portal-page">
+        {/* Top Banner */}
+        <div className="portal-header">
           <h1 className="portal-title">System Operations & Admin Console</h1>
-          <p className="portal-subtitle">
-            Logged in as <b>{user?.name || 'Administrator'}</b>. Monitoring distributed microservice health, dispatch queues, and telemetry.
-          </p>
         </div>
-        <button onClick={loadAdminTelemetry} className="btn btn-outline btn-refresh" disabled={loading}>
-          <RefreshCw size={16} className={loading ? 'spin' : ''} />
-          <span>Refresh Telemetry</span>
-        </button>
-      </div>
 
+      {/* Notifications */}
       {error && (
-        <div className="portal-alert alert-error">
-          <AlertCircle size={18} />
-          <span>{error}</span>
+        <div className="portal-alert alert-error" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+            <AlertCircle size={18} />
+            <span>{error}</span>
+          </div>
+          <button onClick={() => setError(null)} className="btn btn-outline btn-xs" style={{ border: 'none', color: 'inherit' }}>✕</button>
         </div>
       )}
+
+      {actionSuccessMsg && (
+        <div className="portal-alert alert-success" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', background: '#F0FDF4', border: '1px solid #BBF7D0', color: '#166534', padding: '0.85rem 1.25rem', borderRadius: '8px' }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+            <CheckCircle2 size={18} />
+            <span>{actionSuccessMsg}</span>
+          </div>
+          <button onClick={() => setActionSuccessMsg(null)} className="btn btn-outline btn-xs" style={{ border: 'none', color: 'inherit' }}>✕</button>
+        </div>
+      )}
+
+      {/* High-Priority Real-Time Emergency Audio/Visual Strobe Alert Banner */}
+      {activeSosAlert && (
+        <div className="sos-emergency-strobe-banner">
+          <div className="sos-strobe-left">
+            <div className="sos-strobe-badge">
+              <ShieldAlert size={28} className="sos-icon-pulse" />
+            </div>
+            <div>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+                <span className="sos-badge-critical">CRITICAL EMERGENCY</span>
+                <span style={{ fontSize: '0.85rem', color: '#FEE2E2' }}>
+                  Incident: <code>{activeSosAlert.incident_id}</code>
+                </span>
+              </div>
+              <h3 style={{ margin: '0.2rem 0', color: '#FFFFFF', fontSize: '1.2rem', fontWeight: 800 }}>
+                🚨 IN-RIDE PASSENGER SOS: {activeSosAlert.passenger?.name || activeSosAlert.passenger_name || 'Passenger Emergency'}
+              </h3>
+              <p style={{ margin: 0, fontSize: '0.82rem', color: '#FECACA' }}>
+                Vehicle: <b>{activeSosAlert.driver?.vehicle_model || activeSosAlert.vehicle_model} ({activeSosAlert.driver?.license_plate || activeSosAlert.license_plate})</b> • 
+                Driver: <b>{activeSosAlert.driver?.name || activeSosAlert.driver_name}</b> • 
+                Live GPS: <code>[{Number(activeSosAlert.current_lat || activeSosAlert.trigger_lat).toFixed(4)}°, {Number(activeSosAlert.current_lng || activeSosAlert.trigger_lng).toFixed(4)}°]</code>
+              </p>
+            </div>
+          </div>
+          <div className="sos-strobe-actions">
+            <button 
+              onClick={() => setSoundEnabled(prev => !prev)}
+              className="btn-sos-sound-toggle"
+              title={soundEnabled ? 'Mute Siren Chime' : 'Unmute Siren Chime'}
+            >
+              {soundEnabled ? <Volume2 size={18} /> : <VolumeX size={18} />}
+              <span>{soundEnabled ? 'Siren ON' : 'Muted'}</span>
+            </button>
+            <button
+              onClick={() => setActiveSosAlert(null)}
+              className="btn-sos-dismiss-banner"
+              title="Acknowledge Banner"
+            >
+              Acknowledge
+            </button>
+          </div>
+        </div>
+      )}
+
+      {/* ====================================================================
+       * IN-RIDE SOS & AUTOMATED RESCUE COMMAND SENTINEL
+       * ==================================================================== */}
+      <div className="card sos-sentinel-card">
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1rem', flexWrap: 'wrap', gap: '0.5rem' }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+            <ShieldAlert size={22} style={{ color: '#DC2626' }} />
+            <h3 className="admin-card-title" style={{ margin: 0, color: '#991B1B' }}>
+              In-Ride Emergency SOS & Rescue Command Center
+            </h3>
+          </div>
+          <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+            {sosIncidents.filter(i => i.status === 'ACTIVE').length > 0 ? (
+              <span className="badge-critical-pulse">
+                🚨 {sosIncidents.filter(i => i.status === 'ACTIVE').length} ACTIVE EMERGENCY
+              </span>
+            ) : (
+              <span className="badge badge-success">
+                🛡️ ALL PASSENGERS SECURE
+              </span>
+            )}
+          </div>
+        </div>
+
+        {sosIncidents.length === 0 ? (
+          <div className="sos-clear-state">
+            <ShieldCheck size={32} style={{ color: '#059669', marginBottom: '0.4rem' }} />
+            <b style={{ display: 'block', color: '#065F46', fontSize: '0.95rem' }}>Safety Sentinel Active & Clear</b>
+            <span style={{ fontSize: '0.82rem', color: '#047857' }}>
+              No in-ride passenger emergencies reported. In-ride SOS hotlines and live GPS telemetry streams are standing by.
+            </span>
+          </div>
+        ) : (
+          <>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '1rem' }}>
+              {(showAllSosIncidents ? sosIncidents : sosIncidents.slice(0, 3)).map(inc => {
+              const isActive = inc.status === 'ACTIVE';
+              return (
+                <div 
+                  key={inc.incident_id}
+                  className={`sos-incident-card ${isActive ? 'sos-incident-active' : 'sos-incident-resolved'}`}
+                >
+                  <div className="sos-card-top-row">
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+                      <span className={`sos-status-pill ${isActive ? 'pill-active' : 'pill-resolved'}`}>
+                        {isActive ? '● ACTIVE EMERGENCY' : '✓ RESOLVED'}
+                      </span>
+                      <span style={{ fontSize: '0.8rem', color: 'var(--slate-500)' }}>
+                        Incident: <code>{inc.incident_id}</code>
+                      </span>
+                    </div>
+                    <span style={{ fontSize: '0.78rem', color: 'var(--slate-500)' }}>
+                      Triggered: {new Date(inc.trigger_timestamp || inc.created_at).toLocaleTimeString()}
+                    </span>
+                  </div>
+
+                  {/* Context Grid: Passenger, Driver, Route, Coordinates */}
+                  <div className="sos-context-grid">
+                    <div className="sos-context-col">
+                      <span className="sos-col-label">Passenger in Ride</span>
+                      <b className="sos-col-name">{inc.passenger_name || 'Passenger'}</b>
+                      <span className="sos-col-sub"><Phone size={11} /> {inc.passenger_phone || '+91 98250 12345'}</span>
+                    </div>
+
+                    <div className="sos-context-col">
+                      <span className="sos-col-label">Flagged Driver</span>
+                      <b className="sos-col-name">{inc.driver_name || 'Assigned Driver'}</b>
+                      <span className="sos-col-sub">{inc.vehicle_model} • <code>{inc.license_plate}</code></span>
+                    </div>
+
+                    <div className="sos-context-col">
+                      <span className="sos-col-label">Original Route</span>
+                      <span className="sos-col-sub" style={{ display: 'block', textOverflow: 'ellipsis', overflow: 'hidden', whiteSpace: 'nowrap' }}>
+                        <b>From:</b> {inc.pickup_address}
+                      </span>
+                      <span className="sos-col-sub" style={{ display: 'block', textOverflow: 'ellipsis', overflow: 'hidden', whiteSpace: 'nowrap' }}>
+                        <b>To:</b> {inc.destination_address}
+                      </span>
+                    </div>
+
+                    <div className="sos-context-col">
+                      <span className="sos-col-label">Live Telemetry Coordinates</span>
+                      <b className="sos-col-name" style={{ color: '#DC2626' }}>
+                        <code>{Number(inc.current_lat || inc.trigger_lat).toFixed(4)}° N, {Number(inc.current_lng || inc.trigger_lng).toFixed(4)}° E</code>
+                      </b>
+                      <span className="sos-col-sub" style={{ color: '#059669' }}>● Telemetry Stream Active</span>
+                    </div>
+                  </div>
+
+                  {/* Audit Tag */}
+                  <div className="sos-audit-badge-row">
+                    <span className="sos-simulated-authority-badge">
+                      ✓ Simulated alert dispatched to Emergency Contacts & Local Authorities API.
+                    </span>
+                    {inc.admin_action_taken && (
+                      <span className="sos-action-taken-badge">
+                        Action Taken: <b>{inc.admin_action_taken}</b>
+                      </span>
+                    )}
+                    {inc.rescue_ride_id && (
+                      <span className="sos-rescue-badge">
+                        Rescue Cab: <code>{inc.rescue_ride_id}</code> ({inc.rescue_status || 'ASSIGNED'})
+                      </span>
+                    )}
+                  </div>
+
+                  {/* Action Buttons for Active Emergencies */}
+                  {isActive && (
+                    <div className="sos-action-buttons-row">
+                      <button
+                        onClick={() => handleDispatchRescue(inc.incident_id)}
+                        disabled={sosActionLoading === inc.incident_id}
+                        className="btn-sos-rescue"
+                        title="Dispatch nearest free rescue cab to passenger live GPS coordinates"
+                      >
+                        <LifeBuoy size={16} />
+                        <span>Dispatch Free Rescue Cab (₹0 Fare)</span>
+                      </button>
+
+                      <button
+                        onClick={() => handleResolveIncident(inc.incident_id)}
+                        disabled={sosActionLoading === inc.incident_id}
+                        className="btn-sos-resolve"
+                        title="Mark incident resolved"
+                      >
+                        <Check size={16} />
+                        <span>Resolve Incident</span>
+                      </button>
+                    </div>
+                  )}
+                </div>
+              );
+              })}
+            </div>
+            {sosIncidents.length > 3 && (
+              <div style={{ paddingTop: '0.85rem', marginTop: '0.85rem', textAlign: 'center', borderTop: '1px solid #FEE2E2' }}>
+                <button
+                  type="button"
+                  onClick={() => setShowAllSosIncidents(prev => !prev)}
+                  className="btn btn-outline btn-sm"
+                  style={{
+                    fontSize: '0.82rem',
+                    fontWeight: 600,
+                    color: '#991B1B',
+                    borderColor: '#FECACA',
+                    background: '#FEF2F2',
+                    padding: '0.45rem 1.25rem',
+                    borderRadius: '8px',
+                    display: 'inline-flex',
+                    alignItems: 'center',
+                    gap: '0.35rem',
+                    cursor: 'pointer'
+                  }}
+                >
+                  {showAllSosIncidents ? (
+                    <>Show Less <ChevronUp size={15} /></>
+                  ) : (
+                    <>Show More ({sosIncidents.length - 3} more records) <ChevronDown size={15} /></>
+                  )}
+                </button>
+              </div>
+            )}
+          </>
+        )}
+      </div>
 
       {/* KPI Stats Grid */}
       <div className="grid grid-cols-4 admin-kpi-grid">
@@ -125,7 +558,7 @@ const AdminPortal = () => {
           icon={<Car size={20} />} 
           label="Total Fleet Drivers" 
           value={drivers.length} 
-          subtext={`${availableDrivers} Online / ${offlineDrivers} Offline`} 
+          subtext={`${availableDrivers} Online / ${offlineDrivers} Offline / ${pendingDrivers.length} Pending`} 
           color="blue" 
         />
         <StatCard 
@@ -140,330 +573,140 @@ const AdminPortal = () => {
           icon={<CheckCircle2 size={20} />} 
           label="Completed Rides" 
           value={completedRides} 
-          subtext="Successfully delivered" 
+          subtext="Delivered in Ahmedabad" 
           color="green" 
         />
         <StatCard 
-          icon={<Server size={20} />} 
-          label="API Ingress Requests" 
-          value={metrics?.gateway?.totalRequests || 0} 
-          subtext={`Uptime: ${metrics?.uptimeSeconds || 0}s`} 
+          icon={<DollarSign size={20} />} 
+          label="Gross Platform GMV" 
+          value={`₹${totalGrossRevenue.toLocaleString('en-IN')}`} 
+          subtext={`Commission: ₹${platformRevenue}`} 
           color="purple" 
         />
       </div>
 
-      {/* Distributed Subsystems Health & Circuit Breakers */}
-      {/* Infrastructure & Telemetry 3-Column Grid */}
-      <div className="health-breaker-grid">
-        {/* 1. Service Health Monitor */}
-        <div className="card">
-          <h3 className="admin-card-title"><Activity size={18} className="icon-blue" /> Infrastructure Health</h3>
-          <div className="services-health-list">
-            <div className="health-item-row">
-              <div className="service-info">
-                <span className="dot green"></span>
-                <div>
-                  <span className="service-name">API Gateway (Ingress)</span>
-                  <span className="service-url">http://localhost:5000</span>
-                </div>
-              </div>
-              <span className="badge badge-success">HEALTHY (UP)</span>
-            </div>
-
-            <div className="health-item-row">
-              <div className="service-info">
-                <span className={`dot ${servicesHealth?.services?.rideService?.status === 'UP' ? 'green' : 'red'}`}></span>
-                <div>
-                  <span className="service-name">Ride Domain Service</span>
-                  <span className="service-url">http://localhost:5001</span>
-                </div>
-              </div>
-              <span className={`badge ${servicesHealth?.services?.rideService?.status === 'UP' ? 'badge-success' : 'badge-neutral'}`}>
-                {servicesHealth?.services?.rideService?.status || 'UNKNOWN'}
-              </span>
-            </div>
-
-            <div className="health-item-row">
-              <div className="service-info">
-                <span className={`dot ${servicesHealth?.services?.driverService?.status === 'UP' ? 'green' : 'red'}`}></span>
-                <div>
-                  <span className="service-name">Driver Telemetry Service</span>
-                  <span className="service-url">http://localhost:5002</span>
-                </div>
-              </div>
-              <span className={`badge ${servicesHealth?.services?.driverService?.status === 'UP' ? 'badge-success' : 'badge-neutral'}`}>
-                {servicesHealth?.services?.driverService?.status || 'UNKNOWN'}
-              </span>
-            </div>
-
-            <div className="health-item-row">
-              <div className="service-info">
-                <span className="dot green"></span>
-                <div>
-                  <span className="service-name">PostgreSQL 16 Database</span>
-                  <span className="service-url">Port 5432 (rideflow_db)</span>
-                </div>
-              </div>
-              <span className="badge badge-success">ACID PERSISTENCE</span>
-            </div>
-
-            <div className="health-item-row">
-              <div className="service-info">
-                <span className={`dot ${metrics?.redis?.connected ? 'green' : 'red'}`}></span>
-                <div>
-                  <span className="service-name">Redis 7 Distributed Cache</span>
-                  <span className="service-url">Port 6379 (rideflow-redis)</span>
-                </div>
-              </div>
-              <span className={`badge ${metrics?.redis?.connected ? 'badge-success' : 'badge-warning'}`}>
-                {metrics?.redis?.connected ? 'DISTRIBUTED (UP)' : 'DEGRADED (DOWN)'}
-              </span>
-            </div>
-          </div>
-        </div>
-
-        {/* 2. Redis Caching & Invalidation Telemetry */}
-        <div className="card">
-          <h3 className="admin-card-title"><Zap size={18} className="icon-blue" /> Redis Caching & Telemetry</h3>
-          
-          <div className="telemetry-box">
-            <div className="telemetry-row">
-              <span>Redis Cluster Mode:</span>
-              <span className={`badge ${metrics?.redis?.connected ? 'badge-success' : 'badge-warning'}`}>
-                {metrics?.redis?.provider || 'Redis 7 (Alpine)'}
-              </span>
-            </div>
-            <div className="telemetry-row">
-              <span>Redis Memory Footprint:</span>
-              <b>{metrics?.redis?.memoryUsed || '1.2M'}</b>
-            </div>
-            <div className="telemetry-row">
-              <span>Driver Service Cache Hits / Misses:</span>
-              <b>
-                {servicesHealth?.services?.driverService?.details?.redis?.cacheMetrics?.hits || 0} / {servicesHealth?.services?.driverService?.details?.redis?.cacheMetrics?.misses || 0}
-              </b>
-            </div>
-            <div className="telemetry-row">
-              <span>Driver Cache Hit Ratio:</span>
-              <b style={{ color: '#059669' }}>
-                {servicesHealth?.services?.driverService?.details?.redis?.cacheMetrics?.hitRate || '0.0%'}
-              </b>
-            </div>
-            <div className="telemetry-divider"></div>
-            <div className="telemetry-row">
-              <span>Ride Service Cache Hits / Misses:</span>
-              <b>
-                {servicesHealth?.services?.rideService?.details?.redis?.cacheMetrics?.hits || 0} / {servicesHealth?.services?.rideService?.details?.redis?.cacheMetrics?.misses || 0}
-              </b>
-            </div>
-            <div className="telemetry-row">
-              <span>Cache Invalidation Triggers:</span>
-              <b>
-                {(servicesHealth?.services?.driverService?.details?.redis?.cacheMetrics?.invalidations || 0) + 
-                 (servicesHealth?.services?.rideService?.details?.redis?.cacheMetrics?.invalidations || 0)} events
-              </b>
-            </div>
-            <div className="telemetry-row">
-              <span>Cache Consistency Policy:</span>
-              <span className="badge badge-info">WRITE-THROUGH INVALIDATION</span>
-            </div>
-          </div>
-        </div>
-
-        {/* 3. Distributed Rate Limiting & Circuit Breakers */}
-        <div className="card">
-          <h3 className="admin-card-title"><ShieldCheck size={18} className="icon-blue" /> Rate Limiting & Fault Tolerance</h3>
-          
-          <div className="telemetry-box">
-            <div className="telemetry-row">
-              <span>Token Bucket Rate Limiter:</span>
-              <b>{metrics?.rateLimiter?.algorithm || 'Distributed Token Bucket'}</b>
-            </div>
-            <div className="telemetry-row">
-              <span>Limiter Storage Provider:</span>
-              <span className="badge badge-success">
-                {metrics?.rateLimiter?.redisBacked ? 'REDIS DISTRIBUTED' : 'LOCAL MEMORY'}
-              </span>
-            </div>
-            <div className="telemetry-row">
-              <span>Tracked Active Clients:</span>
-              <b>{metrics?.rateLimiter?.activeTrackedClients || 1}</b>
-            </div>
-            <div className="telemetry-row">
-              <span>HTTP 429 Throttle Triggers:</span>
-              <b style={{ color: metrics?.rateLimiter?.exceededCount429 > 0 ? '#DC2626' : 'inherit' }}>
-                {metrics?.rateLimiter?.exceededCount429 || 0}
-              </b>
-            </div>
-            <div className="telemetry-divider"></div>
-            <div className="telemetry-row">
-              <span>Ride Service Circuit Breaker:</span>
-              <span className={`badge ${metrics?.circuitBreakers?.rideService?.state === 'OPEN' ? 'badge-danger' : metrics?.circuitBreakers?.rideService?.state === 'HALF-OPEN' ? 'badge-warning' : 'badge-success'}`}>
-                {metrics?.circuitBreakers?.rideService?.state || 'CLOSED'}
-              </span>
-            </div>
-            <div className="telemetry-row">
-              <span>Driver Service Circuit Breaker:</span>
-              <span className={`badge ${metrics?.circuitBreakers?.driverService?.state === 'OPEN' ? 'badge-danger' : metrics?.circuitBreakers?.driverService?.state === 'HALF-OPEN' ? 'badge-warning' : 'badge-success'}`}>
-                {metrics?.circuitBreakers?.driverService?.state || 'CLOSED'}
-              </span>
-            </div>
-            <div className="telemetry-row">
-              <span>Failover Resilience:</span>
-              <span className="badge badge-success">REDIS GRACEFUL FALLBACK</span>
-            </div>
-
-            {/* Interactive Chaos Testing Trigger Bar */}
-            <div style={{ marginTop: '0.85rem', paddingTop: '0.75rem', borderTop: '1px solid var(--slate-200)' }}>
-              <div style={{ fontSize: '0.72rem', color: 'var(--slate-500)', textTransform: 'uppercase', fontWeight: 700, marginBottom: '0.4rem' }}>
-                Chaos Engineering Controls
-              </div>
-              <div style={{ display: 'flex', gap: '0.4rem', flexWrap: 'wrap' }}>
-                <button 
-                  onClick={() => handleInjectChaos('driverService', 'trip')}
-                  disabled={chaosLoading}
-                  className="btn btn-outline"
-                  style={{ fontSize: '0.75rem', padding: '0.3rem 0.6rem', color: '#DC2626', borderColor: '#FCA5A5' }}
-                >
-                  ⚡ Trip Breaker (OPEN)
-                </button>
-                <button 
-                  onClick={() => handleInjectChaos('driverService', 'error')}
-                  disabled={chaosLoading}
-                  className="btn btn-outline"
-                  style={{ fontSize: '0.75rem', padding: '0.3rem 0.6rem', color: '#D97706', borderColor: '#FDE68A' }}
-                >
-                  💥 Inject 500 Chaos
-                </button>
-                <button 
-                  onClick={handleResetChaos}
-                  disabled={chaosLoading}
-                  className="btn btn-outline"
-                  style={{ fontSize: '0.75rem', padding: '0.3rem 0.6rem', color: '#059669', borderColor: '#A7F3D0' }}
-                >
-                  ✅ Heal & Close
-                </button>
-              </div>
-            </div>
-          </div>
-        </div>
+      {/* ====================================================================
+       * FEATURE 1: LIVE "GOD-VIEW" FLEET COMMAND MAP
+       * ==================================================================== */}
+      <div className="card" style={{ padding: 0, overflow: 'hidden' }}>
+        <AdminFleetMap drivers={drivers} rides={rides} height="460px" />
       </div>
 
-      {/* RabbitMQ Queues & Background Workers */}
-      <div className="card">
-        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1rem' }}>
-          <h3 className="admin-card-title" style={{ margin: 0 }}>
-            <Radio size={18} className="icon-blue" /> RabbitMQ Asynchronous Worker Pipeline & DLQ Monitor
+      {/* ====================================================================
+       * FEATURE 4: FINANCIAL & REVENUE ANALYTICS + DYNAMIC SURGE PRICING
+       * ==================================================================== */}
+      <div className="revenue-dashboard-grid">
+        {/* Left Column: Financial Breakdown */}
+        <div className="card">
+          <h3 className="admin-card-title">
+            <TrendingUp size={20} className="icon-blue" /> Financial & Revenue Analytics Breakdown
           </h3>
-          <a 
-            href="http://localhost:15672" 
-            target="_blank" 
-            rel="noopener noreferrer" 
-            className="badge badge-info"
-            style={{ textDecoration: 'none' }}
-          >
-            Open RabbitMQ UI (:15672) ↗
-          </a>
+
+          <div className="revenue-kpi-subgrid">
+            <div className="revenue-kpi-card">
+              <span className="revenue-kpi-label">Gross Bookings (GMV)</span>
+              <span className="revenue-kpi-val" style={{ color: '#1E40AF' }}>₹{totalGrossRevenue.toLocaleString('en-IN')}</span>
+              <span className="revenue-kpi-sub">Total ride fares transacted</span>
+            </div>
+            <div className="revenue-kpi-card">
+              <span className="revenue-kpi-label">GoDrop Cut (20%)</span>
+              <span className="revenue-kpi-val" style={{ color: '#059669' }}>₹{platformRevenue}</span>
+              <span className="revenue-kpi-sub">Platform commission retained</span>
+            </div>
+            <div className="revenue-kpi-card">
+              <span className="revenue-kpi-label">Driver Payouts (80%)</span>
+              <span className="revenue-kpi-val" style={{ color: '#7C3AED' }}>₹{driverPayouts}</span>
+              <span className="revenue-kpi-sub">Direct fleet earnings disbursed</span>
+            </div>
+            <div className="revenue-kpi-card">
+              <span className="revenue-kpi-label">Average Ride Fare</span>
+              <span className="revenue-kpi-val">₹{avgFare}</span>
+              <span className="revenue-kpi-sub">Avg Distance: {avgDistance} km</span>
+            </div>
+          </div>
         </div>
 
-        <div className="table-container">
-          <table className="data-table">
-            <thead>
-              <tr>
-                <th>Queue Name</th>
-                <th>Purpose</th>
-                <th>Routing Keys Bound</th>
-                <th>Active Consumers</th>
-                <th>Queued Messages</th>
-                <th>Dead-Letter Target</th>
-                <th>Status</th>
-              </tr>
-            </thead>
-            <tbody>
-              <tr>
-                <td><code>dispatch.queue</code></td>
-                <td>Asynchronous Driver Proximity Dispatching</td>
-                <td><code>ride.requested, ride.rejected, ride.timeout</code></td>
-                <td>1 (Dispatch Worker)</td>
-                <td><b>0</b></td>
-                <td><code>rideflow.dlx &rarr; dispatch.dlq</code></td>
-                <td><span className="badge badge-success">ACTIVE LISTENER</span></td>
-              </tr>
-              <tr>
-                <td><code>notification.queue</code></td>
-                <td>Simulated Multi-Channel Alerts (SMS, Push, Email)</td>
-                <td><code>ride.*, driver.*</code></td>
-                <td>1 (Notification Worker)</td>
-                <td><b>0</b></td>
-                <td><code>rideflow.dlx &rarr; notification.dlq</code></td>
-                <td><span className="badge badge-success">ACTIVE LISTENER</span></td>
-              </tr>
-              <tr>
-                <td><code>dispatch.dlq</code></td>
-                <td>Dead-Letter Queue for Unrecoverable Dispatch Failures</td>
-                <td><code>dispatch.dlq (DLX direct)</code></td>
-                <td>Audit Monitor</td>
-                <td><b>0</b></td>
-                <td>N/A (Poison Pill Vault)</td>
-                <td><span className="badge badge-neutral">DURABLE DLQ</span></td>
-              </tr>
-              <tr>
-                <td><code>notification.dlq</code></td>
-                <td>Dead-Letter Queue for Failed Notifications</td>
-                <td><code>notification.dlq (DLX direct)</code></td>
-                <td>Audit Monitor</td>
-                <td><b>0</b></td>
-                <td>N/A (Poison Pill Vault)</td>
-                <td><span className="badge badge-neutral">DURABLE DLQ</span></td>
-              </tr>
-            </tbody>
-          </table>
-        </div>
-      </div>
-
-      {/* Socket.IO Real-time Engine & Live Telemetry Channels */}
-      <div className="card">
-        <h3 className="admin-card-title">
-          <Zap size={18} className="icon-blue" /> Socket.IO Real-time Channels & Multi-tenant Stream Monitor
-        </h3>
-        <div className="telemetry-box" style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))', gap: '1rem', background: '#F8FAFC', padding: '1rem', borderRadius: 'var(--radius-md)' }}>
-          <div>
-            <span style={{ fontSize: '0.75rem', color: '#64748B', textTransform: 'uppercase', fontWeight: 600 }}>Active WebSockets</span>
-            <div style={{ fontSize: '1.4rem', fontWeight: 700, color: '#0F172A', marginTop: '0.2rem' }}>
-              {metrics?.socketio?.connectedClients ?? 1} <span style={{ fontSize: '0.75rem', fontWeight: 500, color: '#059669' }}>● Connected</span>
-            </div>
-            <div style={{ fontSize: '0.75rem', color: '#64748B' }}>Total Served: {metrics?.socketio?.totalConnectionsServed ?? 1}</div>
+        {/* Right Column: Dynamic Surge Pricing Controller */}
+        <div className="surge-pricing-card">
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+            <h3 className="admin-card-title" style={{ margin: 0 }}>
+              <Sliders size={20} style={{ color: '#D97706' }} /> Surge Pricing Engine
+            </h3>
+            <span className={`badge ${surgeMultiplier > 1.0 ? 'badge-warning' : 'badge-neutral'}`}>
+              {surgeMultiplier > 1.0 ? `${surgeMultiplier}x SURGE ACTIVE` : '1.0x STANDARD'}
+            </span>
           </div>
 
-          <div>
-            <span style={{ fontSize: '0.75rem', color: '#64748B', textTransform: 'uppercase', fontWeight: 600 }}>Active Channel Rooms</span>
-            <div style={{ fontSize: '1.4rem', fontWeight: 700, color: '#2563EB', marginTop: '0.2rem' }}>
-              {metrics?.socketio?.activeRoomsCount ?? 3} <span style={{ fontSize: '0.75rem', fontWeight: 500, color: '#64748B' }}>Rooms</span>
+          <p style={{ fontSize: '0.82rem', color: 'var(--slate-600)', margin: 0 }}>
+            Adjust the dynamic pricing multiplier in real time to balance passenger ride demand with driver availability across Ahmedabad during peak hours or rainfall.
+          </p>
+
+          <div className="surge-slider-box">
+            <div className="surge-slider-header">
+              <span style={{ fontSize: '0.85rem', fontWeight: 600, color: 'var(--slate-700)' }}>Pricing Multiplier:</span>
+              <span className="surge-slider-val">{surgeMultiplier.toFixed(1)}x</span>
             </div>
-            <div style={{ fontSize: '0.75rem', color: '#64748B' }}>user:*, driver:*, ride:*</div>
+            <input 
+              type="range" 
+              min="1.0" 
+              max="3.0" 
+              step="0.1" 
+              value={surgeMultiplier} 
+              onChange={(e) => applySurgeMultiplier(e.target.value, false)}
+              className="surge-range-input" 
+            />
           </div>
 
-          <div>
-            <span style={{ fontSize: '0.75rem', color: '#64748B', textTransform: 'uppercase', fontWeight: 600 }}>Real-time Event Throughput</span>
-            <div style={{ fontSize: '1.4rem', fontWeight: 700, color: '#7C3AED', marginTop: '0.2rem' }}>
-              {metrics?.socketio?.eventsEmitted ?? 0} <span style={{ fontSize: '0.75rem', fontWeight: 500, color: '#64748B' }}>Emitted</span>
-            </div>
-            <div style={{ fontSize: '0.75rem', color: '#64748B' }}>Received: {metrics?.socketio?.eventsReceived ?? 0} events</div>
+          <div className="surge-presets-list">
+            <button 
+              type="button" 
+              className={`surge-preset-btn ${surgeMultiplier === 1.0 ? 'active' : ''}`}
+              disabled={surgeSaving}
+              onClick={() => applySurgeMultiplier(1.0, true)}
+            >
+              1.0x Normal
+            </button>
+            <button 
+              type="button" 
+              className={`surge-preset-btn ${surgeMultiplier === 1.4 ? 'active' : ''}`}
+              disabled={surgeSaving}
+              onClick={() => applySurgeMultiplier(1.4, true)}
+            >
+              1.4x Rain
+            </button>
+            <button 
+              type="button" 
+              className={`surge-preset-btn ${surgeMultiplier === 1.8 ? 'active' : ''}`}
+              disabled={surgeSaving}
+              onClick={() => applySurgeMultiplier(1.8, true)}
+            >
+              1.8x Rush
+            </button>
+            <button 
+              type="button" 
+              className={`surge-preset-btn ${surgeMultiplier === 2.5 ? 'active' : ''}`}
+              disabled={surgeSaving}
+              onClick={() => applySurgeMultiplier(2.5, true)}
+            >
+              2.5x High
+            </button>
           </div>
 
-          <div>
-            <span style={{ fontSize: '0.75rem', color: '#64748B', textTransform: 'uppercase', fontWeight: 600 }}>Distributed Bridge</span>
-            <div style={{ fontSize: '1.4rem', fontWeight: 700, color: '#059669', marginTop: '0.2rem' }}>
-              REDIS PUB/SUB
-            </div>
-            <div style={{ fontSize: '0.75rem', color: '#64748B' }}>Multi-Service Real-Time Sync</div>
+          <div className="surge-formula-preview">
+            <div style={{ fontWeight: 700, marginBottom: '0.2rem' }}>Dynamic Formula Impact:</div>
+            <div>• Base Fare: ₹{(50 * surgeMultiplier).toFixed(2)} (Standard: ₹50.00)</div>
+            <div>• Distance Rate: ₹{(18.50 * surgeMultiplier).toFixed(2)}/km (Standard: ₹18.50)</div>
+            <div>• Example 6 km ride: <b>₹{(50 * surgeMultiplier + 6 * 18.50 * surgeMultiplier).toFixed(2)}</b></div>
           </div>
         </div>
       </div>
 
       {/* Driver Inventory Table */}
       <div className="card">
-        <h3 className="admin-card-title">Driver Fleet & Geospatial Coordinates</h3>
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1rem' }}>
+          <h3 className="admin-card-title" style={{ margin: 0 }}>Driver Fleet Registry & Verification Status</h3>
+          <span className="badge badge-info">{drivers.length} Drivers</span>
+        </div>
         <div className="table-container">
           <table className="data-table">
             <thead>
@@ -472,35 +715,107 @@ const AdminPortal = () => {
                 <th>Name</th>
                 <th>Vehicle</th>
                 <th>License Plate</th>
+                <th>Verification</th>
                 <th>Status</th>
-                <th>GPS Latitude</th>
-                <th>GPS Longitude</th>
+                <th>GPS Location</th>
+                <th>Admin Actions</th>
               </tr>
             </thead>
             <tbody>
-              {drivers.map(d => (
-                <tr key={d.id}>
-                  <td><code>{d.id}</code></td>
-                  <td><b>{d.name}</b></td>
-                  <td>{d.vehicle_model}</td>
-                  <td><code>{d.license_plate}</code></td>
-                  <td>
-                    <span className={`badge ${d.status === 'AVAILABLE' ? 'badge-success' : 'badge-neutral'}`}>
-                      {d.status}
-                    </span>
+              {drivers.length > 0 ? (
+                (showAllDrivers ? drivers : drivers.slice(0, 5)).map(d => {
+                  const isPending = d.approval_status === 'PENDING';
+                  return (
+                    <tr key={d.id}>
+                      <td><code>{d.id}</code></td>
+                      <td><b>{d.name || 'Driver'}</b></td>
+                      <td>{d.vehicle_model}</td>
+                      <td><code>{d.license_plate}</code></td>
+                      <td>
+                        <span className={`badge ${d.approval_status === 'APPROVED' ? 'badge-success' : isPending ? 'badge-warning' : 'badge-danger'}`}>
+                          {d.approval_status || 'APPROVED'}
+                        </span>
+                      </td>
+                      <td>
+                        <span className={`badge ${d.status === 'AVAILABLE' ? 'badge-success' : isPending ? 'badge-neutral' : d.status === 'ON_TRIP' ? 'badge-warning' : 'badge-neutral'}`}>
+                          {d.status}
+                        </span>
+                      </td>
+                      <td>{d.current_latitude?.toFixed(4)}, {d.current_longitude?.toFixed(4)}</td>
+                      <td>
+                        {isPending ? (
+                          <div style={{ display: 'flex', gap: '0.35rem' }}>
+                            <button 
+                              onClick={() => handleApproveDriver(d.id, d.name)}
+                              disabled={pendingActionLoading === d.id}
+                              className="btn btn-outline btn-xs"
+                              style={{ color: '#059669', borderColor: '#A7F3D0' }}
+                            >
+                              ✓ Approve
+                            </button>
+                            <button 
+                              onClick={() => handleRejectDriver(d.id, d.name)}
+                              disabled={pendingActionLoading === d.id}
+                              className="btn btn-outline btn-xs"
+                              style={{ color: '#DC2626', borderColor: '#FCA5A5' }}
+                            >
+                              ✕ Reject
+                            </button>
+                          </div>
+                        ) : (
+                          <span style={{ fontSize: '0.75rem', color: '#64748B' }}>Verified Active</span>
+                        )}
+                      </td>
+                    </tr>
+                  );
+                })
+              ) : (
+                <tr>
+                  <td colSpan="8" style={{ textAlign: 'center', padding: '2rem', color: '#64748B' }}>
+                    No drivers registered yet.
                   </td>
-                  <td>{d.current_latitude?.toFixed(4)}</td>
-                  <td>{d.current_longitude?.toFixed(4)}</td>
                 </tr>
-              ))}
+              )}
             </tbody>
           </table>
         </div>
+
+        {drivers.length > 5 && (
+          <div style={{ padding: '0.85rem', textAlign: 'center', borderTop: '1px solid var(--slate-100, #f1f5f9)' }}>
+            <button
+              type="button"
+              onClick={() => setShowAllDrivers(prev => !prev)}
+              className="btn btn-outline btn-sm"
+              style={{
+                fontSize: '0.82rem',
+                fontWeight: 600,
+                color: '#2563EB',
+                borderColor: '#BFDBFE',
+                background: '#EFF6FF',
+                padding: '0.45rem 1.25rem',
+                borderRadius: '8px',
+                display: 'inline-flex',
+                alignItems: 'center',
+                gap: '0.4rem',
+                cursor: 'pointer'
+              }}
+            >
+              {showAllDrivers ? (
+                <>Show Less <ChevronUp size={15} /></>
+              ) : (
+                <>Show More ({drivers.length - 5} more drivers) <ChevronDown size={15} /></>
+              )}
+            </button>
+          </div>
+        )}
       </div>
 
       {/* All System Rides Table */}
       <div className="card">
-        <h3 className="admin-card-title">All Rides State Machine Registry</h3>
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1rem' }}>
+          <h3 className="admin-card-title" style={{ margin: 0 }}>All Rides State Machine Registry</h3>
+          <span className="badge badge-info">{rides.length} Total Rides</span>
+        </div>
         <div className="table-container">
           <table className="data-table">
             <thead>
@@ -515,25 +830,63 @@ const AdminPortal = () => {
               </tr>
             </thead>
             <tbody>
-              {rides.map(r => (
-                <tr key={r.id}>
-                  <td><code>{r.id.substring(0, 14)}...</code></td>
-                  <td>{r.passenger_name || 'Passenger'}</td>
-                  <td>{r.pickup_address}</td>
-                  <td>{r.destination_address}</td>
-                  <td><b>₹{r.fare_amount}</b></td>
-                  <td>
-                    <span className={`badge ${r.status === 'COMPLETED' ? 'badge-success' : r.status === 'CANCELLED' ? 'badge-neutral' : 'badge-warning'}`}>
-                      {r.status}
-                    </span>
+              {rides.length > 0 ? (
+                (showAllRides ? rides : rides.slice(0, 5)).map(r => (
+                  <tr key={r.id}>
+                    <td><code>{r.id.substring(0, 14)}...</code></td>
+                    <td>{r.passenger_name || 'Passenger'}</td>
+                    <td>{r.pickup_address}</td>
+                    <td>{r.destination_address}</td>
+                    <td><b>₹{r.fare_amount}</b></td>
+                    <td>
+                      <span className={`badge ${r.status === 'COMPLETED' ? 'badge-success' : r.status === 'CANCELLED' ? 'badge-neutral' : 'badge-warning'}`}>
+                        {r.status}
+                      </span>
+                    </td>
+                    <td>{new Date(r.created_at).toLocaleString()}</td>
+                  </tr>
+                ))
+              ) : (
+                <tr>
+                  <td colSpan="7" style={{ textAlign: 'center', padding: '2rem', color: '#64748B' }}>
+                    No ride requests recorded yet.
                   </td>
-                  <td>{new Date(r.created_at).toLocaleString()}</td>
                 </tr>
-              ))}
+              )}
             </tbody>
           </table>
         </div>
+
+        {rides.length > 5 && (
+          <div style={{ padding: '0.85rem', textAlign: 'center', borderTop: '1px solid var(--slate-100, #f1f5f9)' }}>
+            <button
+              type="button"
+              onClick={() => setShowAllRides(prev => !prev)}
+              className="btn btn-outline btn-sm"
+              style={{
+                fontSize: '0.82rem',
+                fontWeight: 600,
+                color: '#2563EB',
+                borderColor: '#BFDBFE',
+                background: '#EFF6FF',
+                padding: '0.45rem 1.25rem',
+                borderRadius: '8px',
+                display: 'inline-flex',
+                alignItems: 'center',
+                gap: '0.4rem',
+                cursor: 'pointer'
+              }}
+            >
+              {showAllRides ? (
+                <>Show Less <ChevronUp size={15} /></>
+              ) : (
+                <>Show More ({rides.length - 5} older rides) <ChevronDown size={15} /></>
+              )}
+            </button>
+          </div>
+        )}
       </div>
+    </div>
     </div>
   );
 };

@@ -1,62 +1,82 @@
-import React, { useState } from 'react';
-import { Link, useLocation } from 'react-router-dom';
-import { 
-  Car, 
-  MapPin, 
-  Users, 
-  ShieldCheck, 
-  Cpu, 
-  LogIn, 
-  LogOut, 
-  User, 
-  Menu, 
-  X 
-} from 'lucide-react';
+import React, { useState, useRef, useEffect } from 'react';
+import { Link, useNavigate, useLocation } from 'react-router-dom';
+import { Car, LogIn, LogOut, ChevronDown, Navigation, Activity, Home as HomeIcon } from 'lucide-react';
 import { useAuth } from '../context/AuthContext';
+import { navigateToPortal, getPortalUrl } from '../utils/portalRouter';
 import './Navbar.css';
 
 const Navbar = () => {
-  const location = useLocation();
-  const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
   const { user, isAuthenticated, logout } = useAuth();
+  const navigate = useNavigate();
+  const location = useLocation();
+  const [dropdownOpen, setDropdownOpen] = useState(false);
+  const dropdownRef = useRef(null);
 
-  const navLinks = [
-    { path: '/', label: 'Overview', icon: <Car size={18} /> },
-    { path: '/passenger', label: 'Passenger Portal', icon: <Users size={18} /> },
-    { path: '/driver', label: 'Driver Portal', icon: <MapPin size={18} /> },
-    { path: '/admin', label: 'Admin Ops', icon: <ShieldCheck size={18} /> },
-    { path: '/architecture', label: 'System Design', icon: <Cpu size={18} /> },
-  ];
+  const isHomeContext =
+    !window.location.port ||
+    window.location.port === '3000' ||
+    location.pathname === '/' ||
+    location.pathname === '/architecture';
+
+  const handleSignOut = () => {
+    logout();
+    navigateToPortal('HOME', '/', navigate);
+  };
+
+  // Close dropdown on click outside
+  useEffect(() => {
+    const handleClickOutside = (e) => {
+      if (dropdownRef.current && !dropdownRef.current.contains(e.target)) {
+        setDropdownOpen(false);
+      }
+    };
+    if (dropdownOpen) {
+      document.addEventListener('mousedown', handleClickOutside);
+    }
+    return () => {
+      document.removeEventListener('mousedown', handleClickOutside);
+    };
+  }, [dropdownOpen]);
 
   return (
     <header className="navbar-header">
       <div className="container navbar-container">
-        <Link to="/" className="navbar-brand">
-          <div className="brand-icon-wrapper">
-            <Car size={22} className="brand-icon" />
+        {/* Brand Logo & Name: Directly opens Home page on port 3000 */}
+        <a 
+          href={getPortalUrl('HOME', '/')} 
+          onClick={(e) => {
+            if (window.location.port === '3000' || !window.location.port) {
+              e.preventDefault();
+              navigate('/');
+            }
+          }}
+          className="navbar-brand"
+          title="GoDrop Home"
+        >
+          <div className="brand-logo-pill">
+            <img src="/godrop-logo.png" alt="GoDrop" className="brand-logo-img" />
           </div>
-          <div className="brand-text-group">
-            <span className="brand-title">RideFlow</span>
-            <span className="brand-badge">Distributed</span>
-          </div>
-        </Link>
+        </a>
 
-        {/* Desktop Navigation */}
-        <nav className="desktop-nav">
-          {navLinks.map((link) => {
-            const isActive = location.pathname === link.path;
-            return (
-              <Link
-                key={link.path}
-                to={link.path}
-                className={`nav-item ${isActive ? 'nav-item-active' : ''}`}
-              >
-                {link.icon}
-                <span>{link.label}</span>
-              </Link>
-            );
-          })}
-        </nav>
+        {/* Home Screen Navigation Bar Links */}
+        {isHomeContext && (
+          <nav className="home-arch-nav" aria-label="Primary Navigation">
+            <Link
+              to="/"
+              className={`nav-item ${location.pathname === '/' ? 'nav-item-active' : ''}`}
+            >
+              <HomeIcon size={16} />
+              <span>Home</span>
+            </Link>
+            <Link
+              to="/architecture"
+              className={`nav-item ${location.pathname === '/architecture' ? 'nav-item-active' : ''}`}
+            >
+              <Activity size={16} />
+              <span>System Architecture</span>
+            </Link>
+          </nav>
+        )}
 
         {/* User Authentication & Session Action */}
         <div className="navbar-actions">
@@ -67,7 +87,7 @@ const Navbar = () => {
               </span>
               <span className="user-name-text">{user.name}</span>
               <button 
-                onClick={logout} 
+                onClick={handleSignOut} 
                 className="btn-logout-icon" 
                 title="Sign Out"
                 aria-label="Sign Out"
@@ -76,52 +96,59 @@ const Navbar = () => {
               </button>
             </div>
           ) : (
-            <Link to="/auth" className="btn btn-primary btn-sm">
-              <LogIn size={15} />
-              <span>Sign In</span>
-            </Link>
-          )}
-
-          <button 
-            className="mobile-menu-toggle"
-            onClick={() => setMobileMenuOpen(!mobileMenuOpen)}
-            aria-label="Toggle menu"
-          >
-            {mobileMenuOpen ? <X size={24} /> : <Menu size={24} />}
-          </button>
-        </div>
-      </div>
-
-      {/* Mobile Drawer */}
-      {mobileMenuOpen && (
-        <div className="mobile-drawer">
-          <div className="container mobile-drawer-content">
-            {navLinks.map((link) => (
-              <Link
-                key={link.path}
-                to={link.path}
-                className={`mobile-nav-item ${location.pathname === link.path ? 'mobile-nav-item-active' : ''}`}
-                onClick={() => setMobileMenuOpen(false)}
+            <div className="signin-dropdown-wrap" ref={dropdownRef}>
+              <button 
+                type="button"
+                onClick={() => setDropdownOpen(!dropdownOpen)}
+                className="btn btn-primary btn-sm signin-dropdown-trigger"
+                aria-expanded={dropdownOpen}
               >
-                {link.icon}
-                <span>{link.label}</span>
-              </Link>
-            ))}
-            <div style={{ paddingTop: '0.75rem', borderTop: '1px solid var(--border-light)' }}>
-              {isAuthenticated ? (
-                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                  <span>Logged in: <b>{user.name}</b> ({user.role})</span>
-                  <button onClick={logout} className="btn btn-secondary btn-sm">Sign Out</button>
+                <LogIn size={15} />
+                <span>Sign In</span>
+                <ChevronDown size={14} className={`dropdown-chevron ${dropdownOpen ? 'open' : ''}`} />
+              </button>
+
+              {dropdownOpen && (
+                <div className="signin-dropdown-menu">
+                  <button 
+                    type="button"
+                    className="signin-dropdown-item"
+                    onClick={() => {
+                      setDropdownOpen(false);
+                      navigateToPortal('PASSENGER', '/auth?role=passenger', navigate);
+                    }}
+                  >
+                    <div className="dropdown-item-icon passenger">
+                      <Car size={18} />
+                    </div>
+                    <div className="dropdown-item-text">
+                      <span className="dropdown-item-title">Passenger</span>
+                      <span className="dropdown-item-desc">Sign in to book rides</span>
+                    </div>
+                  </button>
+
+                  <button 
+                    type="button"
+                    className="signin-dropdown-item"
+                    onClick={() => {
+                      setDropdownOpen(false);
+                      navigateToPortal('DRIVER', '/auth?role=driver', navigate);
+                    }}
+                  >
+                    <div className="dropdown-item-icon driver">
+                      <Navigation size={18} />
+                    </div>
+                    <div className="dropdown-item-text">
+                      <span className="dropdown-item-title">Driver</span>
+                      <span className="dropdown-item-desc">Sign in to driver terminal</span>
+                    </div>
+                  </button>
                 </div>
-              ) : (
-                <Link to="/auth" className="btn btn-primary" onClick={() => setMobileMenuOpen(false)}>
-                  <LogIn size={16} /> Sign In
-                </Link>
               )}
             </div>
-          </div>
+          )}
         </div>
-      )}
+      </div>
     </header>
   );
 };

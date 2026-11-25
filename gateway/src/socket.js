@@ -2,7 +2,8 @@ import { Server } from 'socket.io';
 import jwt from 'jsonwebtoken';
 import Redis from 'ioredis';
 import { logger } from './logger.js';
-import { JWT_SECRET } from './middleware/auth.js';
+import { JWT_SECRET, verifyAccountActive } from './middleware/auth.js';
+import { query, isDbConnected } from './db.js';
 const REDIS_HOST = process.env.REDIS_HOST || 'localhost';
 const REDIS_PORT = parseInt(process.env.REDIS_PORT || '6379', 10);
 const REDIS_PASSWORD = process.env.REDIS_PASSWORD || undefined;
@@ -33,7 +34,7 @@ export function initSocketServer(httpServer) {
   });
 
   // 1. Handshake Authentication Middleware
-  io.use((socket, next) => {
+  io.use(async (socket, next) => {
     try {
       const authHeader = socket.handshake.auth?.token || 
                          socket.handshake.headers?.authorization || 
@@ -46,6 +47,12 @@ export function initSocketServer(httpServer) {
 
       const token = authHeader.replace(/^Bearer\s+/i, '');
       const decoded = jwt.verify(token, JWT_SECRET);
+
+      const check = await verifyAccountActive(decoded);
+      if (!check.active) {
+        logger.warn({ socketId: socket.id, userId: decoded.id }, 'Socket connection rejected: Account suspended/removed');
+        return next(new Error('Authentication error: Account suspended and removed'));
+      }
 
       socket.user = decoded; // { id, role, email, name }
       next();
@@ -85,6 +92,10 @@ export function initSocketServer(httpServer) {
           if (event === 'ride:status:changed' || event === 'ride:no_drivers_available') {
             io.emit(event, data);
           }
+          if (event === 'NEW_SOS_ALERT' || event.startsWith('sos:')) {
+            // Only forward SOS events to Admin telemetry room (plus the specific `room` emitted above — NEVER broadcast to all passengers!)
+            io.to('admin:telemetry').to('role:admin').emit(event, data);
+          }
           socketMetrics.eventsEmitted++;
           logger.debug({ room, event }, 'Distributed event relayed from Redis to Socket.IO');
         } catch (parseErr) {
@@ -112,6 +123,19 @@ export function initSocketServer(httpServer) {
     // Automatic Room Assignment:
     // Every user joins private user room
     socket.join(`user:${user.id}`);
+
+    // Passengers also join their passenger_id room so passenger-scoped events stay strictly isolated
+    if (user.role === 'PASSENGER' && isDbConnected()) {
+      query('SELECT id FROM passengers WHERE user_id = $1 LIMIT 1', [user.id])
+        .then(r => {
+          const passId = r.rows[0]?.id;
+          if (passId) {
+            socket.join(`user:${passId}`);
+            socket.join(`passenger:${passId}`);
+          }
+        })
+        .catch(() => {});
+    }
 
     // Drivers join driver private room & driver broadcast channel
     if (user.role === 'DRIVER') {
@@ -162,6 +186,22 @@ export function initSocketServer(httpServer) {
 
       // Broadcast to Admin Fleet Telemetry
       io.to('admin:telemetry').emit('driver:telemetry:update', locationData);
+      socketMetrics.eventsEmitted++;
+    });
+
+    // Live Passenger Emergency SOS Coordinates Streaming
+    socket.on('sos:passenger:location', (payload) => {
+      socketMetrics.eventsReceived++;
+      const { incidentId, rideId, lat, lng } = payload || {};
+      const locationData = {
+        incident_id: incidentId,
+        rideId,
+        lat: parseFloat(lat),
+        lng: parseFloat(lng),
+        timestamp: new Date().toISOString(),
+      };
+      io.to('admin:telemetry').emit('sos:live_location', locationData);
+      io.emit('sos:live_location', locationData);
       socketMetrics.eventsEmitted++;
     });
 

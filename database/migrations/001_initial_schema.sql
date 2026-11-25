@@ -31,6 +31,7 @@ CREATE TABLE IF NOT EXISTS passengers (
     id VARCHAR(64) PRIMARY KEY,
     user_id VARCHAR(64) NOT NULL UNIQUE REFERENCES users(id) ON DELETE CASCADE,
     rating NUMERIC(3, 2) NOT NULL DEFAULT 5.00 CHECK (rating >= 1.00 AND rating <= 5.00),
+    total_ratings INTEGER NOT NULL DEFAULT 5,
     total_rides INTEGER NOT NULL DEFAULT 0 CHECK (total_rides >= 0),
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
@@ -47,7 +48,9 @@ CREATE TABLE IF NOT EXISTS drivers (
     vehicle_model VARCHAR(128) NOT NULL,
     license_plate VARCHAR(64) NOT NULL UNIQUE,
     rating NUMERIC(3, 2) NOT NULL DEFAULT 5.00 CHECK (rating >= 1.00 AND rating <= 5.00),
-    status VARCHAR(32) NOT NULL DEFAULT 'OFFLINE' CHECK (status IN ('AVAILABLE', 'OFFLINE', 'RESERVED', 'ON_TRIP')),
+    total_ratings INTEGER NOT NULL DEFAULT 5,
+    status VARCHAR(32) NOT NULL DEFAULT 'OFFLINE' CHECK (status IN ('AVAILABLE', 'OFFLINE', 'RESERVED', 'ON_TRIP', 'SUSPENDED_SOS')),
+    approval_status VARCHAR(32) NOT NULL DEFAULT 'APPROVED' CHECK (approval_status IN ('PENDING', 'APPROVED', 'REJECTED')),
     current_latitude DOUBLE PRECISION NOT NULL,
     current_longitude DOUBLE PRECISION NOT NULL,
     heading INTEGER NOT NULL DEFAULT 0 CHECK (heading >= 0 AND heading <= 360),
@@ -74,7 +77,9 @@ CREATE TABLE IF NOT EXISTS rides (
             'DRIVER_ARRIVED',
             'IN_PROGRESS',
             'COMPLETED',
-            'CANCELLED'
+            'CANCELLED',
+            'ABORTED_SOS',
+            'RESCUE_RIDE'
         )
     ),
     pickup_address VARCHAR(255) NOT NULL,
@@ -85,6 +90,7 @@ CREATE TABLE IF NOT EXISTS rides (
     destination_longitude DOUBLE PRECISION NOT NULL,
     fare_amount NUMERIC(10, 2) NOT NULL CHECK (fare_amount >= 0),
     distance_km NUMERIC(6, 2) CHECK (distance_km >= 0),
+    is_free_rescue BOOLEAN NOT NULL DEFAULT false,
     cancellation_reason VARCHAR(255),
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
@@ -102,7 +108,7 @@ CREATE TABLE IF NOT EXISTS ride_assignments (
     id VARCHAR(64) PRIMARY KEY,
     ride_id VARCHAR(64) NOT NULL REFERENCES rides(id) ON DELETE CASCADE,
     driver_id VARCHAR(64) NOT NULL REFERENCES drivers(id) ON DELETE CASCADE,
-    status VARCHAR(32) NOT NULL DEFAULT 'OFFERED' CHECK (status IN ('OFFERED', 'ACCEPTED', 'REJECTED', 'EXPIRED')),
+    status VARCHAR(32) NOT NULL DEFAULT 'OFFERED' CHECK (status IN ('OFFERED', 'ACCEPTED', 'REJECTED', 'EXPIRED', 'REVOKED')),
     distance_km NUMERIC(6, 2) NOT NULL,
     offered_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     responded_at TIMESTAMPTZ,
@@ -195,5 +201,39 @@ FOR EACH ROW EXECUTE FUNCTION update_timestamp_column();
 DROP TRIGGER IF EXISTS trg_rides_updated_at ON rides;
 CREATE TRIGGER trg_rides_updated_at
 BEFORE UPDATE ON rides
+FOR EACH ROW EXECUTE FUNCTION update_timestamp_column();
+
+-- --------------------------------------------------------------------
+-- 9. SOS_INCIDENTS TABLE (In-Ride Emergency Sentinel & Rescue Dispatch)
+-- --------------------------------------------------------------------
+CREATE TABLE IF NOT EXISTS sos_incidents (
+    incident_id VARCHAR(64) PRIMARY KEY,
+    ride_id VARCHAR(64) NOT NULL REFERENCES rides(id) ON DELETE CASCADE,
+    passenger_id VARCHAR(64) NOT NULL REFERENCES passengers(id) ON DELETE CASCADE,
+    driver_id VARCHAR(64) REFERENCES drivers(id) ON DELETE SET NULL,
+    trigger_timestamp TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    trigger_lat DOUBLE PRECISION NOT NULL,
+    trigger_lng DOUBLE PRECISION NOT NULL,
+    current_lat DOUBLE PRECISION,
+    current_lng DOUBLE PRECISION,
+    status VARCHAR(32) NOT NULL DEFAULT 'ACTIVE' CHECK (status IN ('ACTIVE', 'RESOLVED')),
+    admin_action_taken VARCHAR(255),
+    rescue_ride_id VARCHAR(64) REFERENCES rides(id) ON DELETE SET NULL,
+    flagged_driver_name VARCHAR(128),
+    flagged_driver_phone VARCHAR(32),
+    flagged_vehicle_model VARCHAR(128),
+    flagged_license_plate VARCHAR(64),
+    resolved_at TIMESTAMPTZ,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE INDEX IF NOT EXISTS idx_sos_ride ON sos_incidents(ride_id);
+CREATE INDEX IF NOT EXISTS idx_sos_passenger ON sos_incidents(passenger_id);
+CREATE INDEX IF NOT EXISTS idx_sos_status ON sos_incidents(status);
+
+DROP TRIGGER IF EXISTS trg_sos_incidents_updated_at ON sos_incidents;
+CREATE TRIGGER trg_sos_incidents_updated_at
+BEFORE UPDATE ON sos_incidents
 FOR EACH ROW EXECUTE FUNCTION update_timestamp_column();
 

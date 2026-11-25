@@ -88,6 +88,8 @@ services:
       JWT_SECRET: ${JWT_SECRET:-super_secret_jwt_key_rideflow_academic_system_design_2026}
     ports:
       - "5000:5000"
+    volumes:
+      - ./gateway/src:/app/src
     depends_on:
       postgres:
         condition: service_healthy
@@ -122,6 +124,8 @@ services:
       DRIVER_SERVICE_URL: http://driver-service:5002
     ports:
       - "5001:5001"
+    volumes:
+      - ./services/ride-service/src:/app/src
     depends_on:
       postgres:
         condition: service_healthy
@@ -153,6 +157,8 @@ services:
       REDIS_PORT: 6379
     ports:
       - "5002:5002"
+    volumes:
+      - ./services/driver-service/src:/app/src
     depends_on:
       postgres:
         condition: service_healthy
@@ -229,6 +235,11 @@ services:
     restart: unless-stopped
     ports:
       - "3000:80"
+      - "3001:80"
+      - "3002:80"
+      - "3003:80"
+    volumes:
+      - ./frontend/dist:/usr/share/nginx/html:ro
     depends_on:
       - api-gateway
     networks:

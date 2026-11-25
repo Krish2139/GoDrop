@@ -1,0 +1,246 @@
+/* Leaflet Map Styles */
+@import 'leaflet/dist/leaflet.css';
+
+.ride-map-wrapper {
+  position: relative;
+  width: 100%;
+  border-radius: 14px;
+  overflow: hidden;
+  box-shadow: 0 4px 16px rgba(15, 23, 42, 0.08);
+  border: 1px solid #E2E8F0;
+  background: #F8FAFC;
+  margin: 0.85rem 0;
+  z-index: 1;
+  isolation: isolate;
+}
+
+.ride-map-container {
+  width: 100%;
+  height: 100%;
+  min-height: 280px;
+  z-index: 1;
+}
+
+/* Custom Marker Overlays */
+.custom-leaflet-marker {
+  background: transparent;
+  border: none;
+}
+
+.custom-leaflet-marker-pin {
+  background: transparent;
+  border: none;
+  display: flex;
+  justify-content: center;
+  align-items: flex-end;
+  transform: translate(-50%, -100%);
+  pointer-events: auto;
+}
+
+/* Pickup Marker Pin */
+.pickup-marker-pin {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  position: relative;
+  filter: drop-shadow(0 3px 6px rgba(0,0,0,0.25));
+}
+
+.pickup-marker-badge {
+  background: #059669;
+  color: #FFFFFF;
+  font-weight: 700;
+  font-size: 0.74rem;
+  padding: 0.28rem 0.65rem;
+  border-radius: 9999px;
+  box-shadow: 0 2px 10px rgba(5, 150, 105, 0.45);
+  display: flex;
+  align-items: center;
+  gap: 0.35rem;
+  white-space: nowrap;
+  border: 1.5px solid #FFFFFF;
+}
+
+.pickup-marker-badge .marker-dot {
+  font-size: 0.6rem;
+  color: #A7F3D0;
+}
+
+.pickup-marker-badge .marker-type {
+  font-weight: 800;
+  font-size: 0.68rem;
+  opacity: 0.95;
+  letter-spacing: 0.04em;
+}
+
+.pickup-marker-badge .marker-label {
+  font-weight: 600;
+}
+
+.pickup-marker-arrow {
+  width: 0;
+  height: 0;
+  border-left: 7px solid transparent;
+  border-right: 7px solid transparent;
+  border-top: 8px solid #059669;
+  margin-top: -1px;
+}
+
+/* Destination Marker Pin */
+.dest-marker-pin {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  position: relative;
+  filter: drop-shadow(0 3px 6px rgba(0,0,0,0.25));
+}
+
+.dest-marker-badge {
+  background: #DC2626;
+  color: #FFFFFF;
+  font-weight: 700;
+  font-size: 0.74rem;
+  padding: 0.28rem 0.65rem;
+  border-radius: 9999px;
+  box-shadow: 0 2px 10px rgba(220, 38, 38, 0.45);
+  display: flex;
+  align-items: center;
+  gap: 0.35rem;
+  white-space: nowrap;
+  border: 1.5px solid #FFFFFF;
+}
+
+.dest-marker-badge .marker-dot {
+  font-size: 0.72rem;
+}
+
+.dest-marker-badge .marker-type {
+  font-weight: 800;
+  font-size: 0.68rem;
+  opacity: 0.95;
+  letter-spacing: 0.04em;
+}
+
+.dest-marker-badge .marker-label {
+  font-weight: 600;
+}
+
+.dest-marker-arrow {
+  width: 0;
+  height: 0;
+  border-left: 7px solid transparent;
+  border-right: 7px solid transparent;
+  border-top: 8px solid #DC2626;
+  margin-top: -1px;
+}
+
+/* Driver Vehicle Marker */
+.driver-vehicle-marker {
+  position: relative;
+  width: 44px;
+  height: 44px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.driver-pulse-ring {
+  position: absolute;
+  width: 44px;
+  height: 44px;
+  border-radius: 50%;
+  background: rgba(37, 99, 235, 0.25);
+  animation: carRadarPulse 2s infinite ease-out;
+}
+
+@keyframes carRadarPulse {
+  0% {
+    transform: scale(0.6);
+    opacity: 0.9;
+  }
+  100% {
+    transform: scale(1.6);
+    opacity: 0;
+  }
+}
+
+.driver-icon-disc {
+  width: 34px;
+  height: 34px;
+  background: #2563EB;
+  border: 2px solid #FFFFFF;
+  border-radius: 50%;
+  box-shadow: 0 3px 10px rgba(37, 99, 235, 0.5);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: #FFFFFF;
+  position: relative;
+  z-index: 2;
+  transition: transform 0.3s ease;
+}
+
+.driver-marker-name {
+  position: absolute;
+  top: 40px;
+  left: 50%;
+  transform: translateX(-50%);
+  background: rgba(15, 23, 42, 0.85);
+  color: #FFFFFF;
+  font-size: 0.65rem;
+  font-weight: 700;
+  padding: 0.15rem 0.45rem;
+  border-radius: 4px;
+  white-space: nowrap;
+  pointer-events: none;
+  box-shadow: 0 2px 4px rgba(0,0,0,0.2);
+  z-index: 10;
+}
+
+/* Map Status Badge */
+.map-status-overlay {
+  position: absolute;
+  top: 12px;
+  right: 12px;
+  z-index: 500;
+  background: rgba(255, 255, 255, 0.95);
+  backdrop-filter: blur(4px);
+  padding: 0.35rem 0.75rem;
+  border-radius: 8px;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.12);
+  font-size: 0.75rem;
+  font-weight: 600;
+  color: #1E293B;
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+  border: 1px solid #E2E8F0;
+}
+
+.map-live-dot {
+  width: 7px;
+  height: 7px;
+  background: #10B981;
+  border-radius: 50%;
+  animation: blinkLive 1.5s infinite;
+}
+
+@keyframes blinkLive {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.3; }
+}
+
+/* Map Click Hint */
+.map-hint-overlay {
+  position: absolute;
+  bottom: 10px;
+  right: 10px;
+  z-index: 500;
+  background: rgba(15, 23, 42, 0.8);
+  color: #FFFFFF;
+  padding: 0.25rem 0.6rem;
+  border-radius: 6px;
+  font-size: 0.7rem;
+  font-weight: 500;
+  pointer-events: none;
+}

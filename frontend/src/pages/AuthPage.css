@@ -1,8 +1,44 @@
 .auth-container-page {
+  min-height: calc(100vh - 70px);
+  width: 100%;
   padding: 3rem 1.5rem;
   display: flex;
   justify-content: center;
   align-items: center;
+  transition: background 0.3s ease;
+}
+
+.passenger-auth-page {
+  background-color: #0f172a;
+  background-image: 
+    linear-gradient(135deg, rgba(15, 23, 42, 0.35) 0%, rgba(15, 23, 42, 0.30) 100%),
+    url('/passenger-auth-bg.jpg');
+  background-repeat: no-repeat;
+  background-size: cover;
+  background-position: center center;
+  background-attachment: fixed;
+}
+
+.driver-auth-page {
+  background-color: #0f172a;
+  background-image: 
+    linear-gradient(135deg, rgba(15, 23, 42, 0.35) 0%, rgba(15, 23, 42, 0.30) 100%),
+    url('/driver-auth-bg.jpg');
+  background-repeat: no-repeat;
+  background-size: cover;
+  background-position: center center;
+  background-attachment: fixed;
+}
+
+.admin-auth-page {
+  background-color: #0f172a;
+  background-image: 
+    linear-gradient(135deg, rgba(15, 23, 42, 0.45) 0%, rgba(15, 23, 42, 0.40) 100%),
+    url('/passenger-auth-bg.jpg');
+  background-repeat: no-repeat;
+  background-size: cover;
+  background-position: center center;
+  background-attachment: fixed;
 }
 
 .auth-card {
@@ -13,6 +49,111 @@
   border-radius: var(--radius-xl);
   padding: 2.5rem;
   box-shadow: var(--shadow-md);
+  transition: all var(--transition-normal);
+}
+
+.auth-back-link {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+  color: #64748B;
+  font-size: 0.85rem;
+  font-weight: 600;
+  transition: color var(--transition-fast);
+}
+
+.auth-back-link:hover {
+  color: var(--primary-700);
+}
+
+/* Glass Auth Card: Transparent Frosted Glass Design for Driver & Passenger */
+.auth-card.glass-auth-card {
+  background: rgba(15, 23, 42, 0.40);
+  backdrop-filter: blur(14px);
+  -webkit-backdrop-filter: blur(14px);
+  border: 1px solid rgba(255, 255, 255, 0.25);
+  box-shadow: 0 25px 50px -12px rgba(0, 0, 0, 0.5), 0 0 0 1px rgba(255, 255, 255, 0.1);
+  color: #ffffff;
+}
+
+.glass-auth-card .auth-back-link {
+  color: #f1f5f9;
+  text-shadow: 0 1px 3px rgba(0, 0, 0, 0.6);
+}
+
+.glass-auth-card .auth-back-link:hover {
+  color: #ffffff;
+}
+
+.glass-auth-card .auth-title {
+  color: #ffffff;
+  text-shadow: 0 2px 6px rgba(0, 0, 0, 0.7);
+}
+
+.glass-auth-card .auth-mode-tabs {
+  background: rgba(0, 0, 0, 0.35);
+  border: 1px solid rgba(255, 255, 255, 0.20);
+  backdrop-filter: blur(8px);
+}
+
+.glass-auth-card .auth-tab {
+  color: #e2e8f0;
+}
+
+.glass-auth-card .auth-tab:hover {
+  color: #ffffff;
+}
+
+.glass-auth-card .auth-tab.active {
+  background: #ffffff;
+  color: #1d4ed8;
+  font-weight: 700;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.3);
+}
+
+.glass-auth-card .form-label {
+  color: #ffffff;
+  font-weight: 600;
+  text-shadow: 0 1px 3px rgba(0, 0, 0, 0.6);
+}
+
+.glass-auth-card .form-input {
+  background-color: rgba(255, 255, 255, 0.92);
+  color: #0f172a;
+  border: 1px solid rgba(255, 255, 255, 0.4);
+  font-weight: 500;
+  backdrop-filter: blur(4px);
+}
+
+.glass-auth-card .form-input:focus {
+  background-color: #ffffff;
+  border-color: #3b82f6;
+  box-shadow: 0 0 0 3px rgba(59, 130, 246, 0.45);
+}
+
+.glass-auth-card .input-icon {
+  color: #64748b;
+}
+
+.glass-auth-card .auth-submit-btn {
+  background: linear-gradient(135deg, #2563eb, #1d4ed8);
+  color: #ffffff;
+  box-shadow: 0 4px 14px rgba(37, 99, 235, 0.5);
+  font-weight: 700;
+}
+
+.glass-auth-card .auth-submit-btn:hover {
+  background: linear-gradient(135deg, #1d4ed8, #1e40af);
+  box-shadow: 0 6px 18px rgba(37, 99, 235, 0.6);
+}
+
+.glass-auth-card .current-session-box {
+  border-top-color: rgba(255, 255, 255, 0.25);
+  color: #e2e8f0;
+}
+
+.glass-auth-card .logout-link {
+  color: #fca5a5;
 }
 
 .auth-header {

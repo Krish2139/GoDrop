@@ -128,10 +128,10 @@ export async function dispatchRide(rideId) {
                 d.status, d.current_latitude, d.current_longitude
          FROM drivers d
          JOIN users u ON d.user_id = u.id
-         WHERE d.status = 'AVAILABLE'
+         WHERE d.status IN ('AVAILABLE', 'RESERVED')
            AND d.id NOT IN (
              SELECT driver_id FROM ride_assignments
-             WHERE ride_id = $1 AND status IN ('REJECTED', 'EXPIRED')
+             WHERE ride_id = $1 AND status IN ('REJECTED', 'EXPIRED', 'REVOKED')
            )`,
         [rideId]
       );
@@ -254,11 +254,11 @@ export async function dispatchRide(rideId) {
       // 4. Atomic Driver Reservation Attempt (Loop through ranked candidates)
       let selectedDriver = null;
       for (const candidate of rankedCandidates) {
-        // Atomic conditional reservation: ensures only one concurrent request can grab this driver
+        // Atomic conditional reservation: mark driver RESERVED if AVAILABLE or maintain RESERVED if already receiving offers
         const reserveRes = await client.query(
           `UPDATE drivers 
            SET status = 'RESERVED', updated_at = NOW() 
-           WHERE id = $1 AND status = 'AVAILABLE' 
+           WHERE id = $1 AND status IN ('AVAILABLE', 'RESERVED') 
            RETURNING *`,
           [candidate.id]
         );
@@ -267,8 +267,8 @@ export async function dispatchRide(rideId) {
           selectedDriver = { ...candidate, ...reserveRes.rows[0] };
           break; // Successfully locked driver atomically
         }
-        // If 0 rows returned, driver was grabbed concurrently, continue to next candidate
-        logger.info({ driverId: candidate.id, rideId }, 'Driver lock contention: Trying next nearest candidate');
+        // If 0 rows returned, driver was grabbed concurrently or went ON_TRIP / OFFLINE
+        logger.info({ driverId: candidate.id, rideId }, 'Driver unavailable: Trying next nearest candidate');
       }
 
       if (!selectedDriver) {
@@ -329,6 +329,14 @@ export async function dispatchRide(rideId) {
       );
 
       const updatedRide = updateRideRes.rows[0];
+      const fullUpdatedRide = {
+        ...updatedRide,
+        driver_name: selectedDriver.name,
+        driver_phone: selectedDriver.phone,
+        vehicle_model: selectedDriver.vehicle_model,
+        license_plate: selectedDriver.license_plate,
+        driver_rating: selectedDriver.rating,
+      };
 
       // 7. Transactional Outbox Event (DRIVER_DISPATCH_OFFERED)
       const outboxPayload = {
@@ -372,14 +380,14 @@ export async function dispatchRide(rideId) {
       publishRealtimeEvent(`ride:${rideId}`, 'ride:status:changed', {
         rideId,
         status: 'DRIVER_ASSIGNED',
-        ride: updatedRide,
+        ride: fullUpdatedRide,
       });
 
       if (ride.passenger_id) {
         publishRealtimeEvent(`user:${ride.passenger_id}`, 'ride:status:changed', {
           rideId,
           status: 'DRIVER_ASSIGNED',
-          ride: updatedRide,
+          ride: fullUpdatedRide,
         });
       }
 
@@ -411,7 +419,7 @@ export async function dispatchRide(rideId) {
           expires_at: expiresAt.toISOString(),
           timeout_seconds: OFFER_TIMEOUT_SECONDS,
         },
-        ride: updatedRide,
+        ride: fullUpdatedRide,
       };
     } catch (err) {
       if (client) await client.query('ROLLBACK');
@@ -436,11 +444,11 @@ export async function dispatchRide(rideId) {
 
   // Find rejected driver IDs for this ride
   const rejectedDriverIds = assignmentsStore
-    .filter(a => a.ride_id === rideId && ['REJECTED', 'EXPIRED'].includes(a.status))
+    .filter(a => a.ride_id === rideId && ['REJECTED', 'EXPIRED', 'REVOKED'].includes(a.status))
     .map(a => a.driver_id);
 
   const availableCandidates = memoryDrivers.filter(
-    d => d.status === 'AVAILABLE' && !rejectedDriverIds.includes(d.id)
+    d => ['AVAILABLE', 'RESERVED'].includes(d.status) && !rejectedDriverIds.includes(d.id)
   );
 
   if (availableCandidates.length === 0) {
@@ -514,7 +522,25 @@ export async function acceptOffer(rideId, driverId) {
       client = await pool.connect();
       await client.query('BEGIN');
 
-      // 1. Verify active assignment or ride status
+      // 1. Verify ride status to prevent accepting completed, cancelled, or foreign-accepted rides
+      const rideRes = await client.query('SELECT * FROM rides WHERE id = $1 FOR UPDATE', [rideId]);
+      if (rideRes.rows.length === 0) {
+        await client.query('ROLLBACK');
+        return { success: false, error: 'NotFound', message: 'Ride not found' };
+      }
+      const currentRide = rideRes.rows[0];
+      if (['COMPLETED', 'CANCELLED', 'ABORTED_SOS'].includes(currentRide.status)) {
+        await client.query('ROLLBACK');
+        return { success: false, error: 'RideClosed', message: 'This ride has already been completed or cancelled.' };
+      }
+      if (['DRIVER_ACCEPTED', 'DRIVER_ARRIVED', 'IN_PROGRESS'].includes(currentRide.status)) {
+        if (currentRide.driver_id && currentRide.driver_id !== driverId) {
+          await client.query('ROLLBACK');
+          return { success: false, error: 'AlreadyAccepted', message: 'This ride has already been accepted by another driver.' };
+        }
+      }
+
+      // 2. Verify active assignment or ride status
       const asgnRes = await client.query(
         `SELECT * FROM ride_assignments 
          WHERE ride_id = $1 AND driver_id = $2 AND status = 'OFFERED' 
@@ -525,34 +551,47 @@ export async function acceptOffer(rideId, driverId) {
       let assignmentId = null;
       if (asgnRes.rows.length === 0) {
         // Fallback: check if the ride is currently in DRIVER_ASSIGNED for this driver
-        const rideCheck = await client.query(
-          `SELECT * FROM rides WHERE id = $1 AND driver_id = $2 AND status = 'DRIVER_ASSIGNED'`,
-          [rideId, driverId]
-        );
-        if (rideCheck.rows.length === 0) {
+        if (currentRide.driver_id !== driverId) {
           await client.query('ROLLBACK');
           return { success: false, error: 'OfferNotFound', message: 'No active assignment found for this driver.' };
         }
       } else {
         const asgn = asgnRes.rows[0];
         assignmentId = asgn.id;
-        // 2. Mark assignment ACCEPTED
+        // Mark assignment ACCEPTED
         await client.query(
           `UPDATE ride_assignments SET status = 'ACCEPTED', responded_at = NOW() WHERE id = $1`,
           [asgn.id]
         );
       }
 
-      // 3. Mark driver ON_TRIP
+      // 3. Revoke ANY other active offers for this ride so it never goes to other drivers
+      await client.query(
+        `UPDATE ride_assignments 
+         SET status = 'REVOKED', responded_at = NOW() 
+         WHERE ride_id = $1 AND driver_id != $2 AND status = 'OFFERED'`,
+        [rideId, driverId]
+      );
+      await client.query(
+        `UPDATE drivers 
+         SET status = 'AVAILABLE', updated_at = NOW() 
+         WHERE id IN (
+           SELECT driver_id FROM ride_assignments 
+           WHERE ride_id = $1 AND driver_id != $2 AND status = 'REVOKED'
+         ) AND status = 'RESERVED'`,
+        [rideId, driverId]
+      );
+
+      // 4. Mark driver ON_TRIP
       await client.query(
         `UPDATE drivers SET status = 'ON_TRIP', updated_at = NOW() WHERE id = $1`,
         [driverId]
       );
 
-      // 4. Update ride to DRIVER_ACCEPTED and query full joined driver info
+      // 5. Update ride to DRIVER_ACCEPTED and query full joined driver info
       await client.query(
-        `UPDATE rides SET status = 'DRIVER_ACCEPTED', updated_at = NOW() WHERE id = $1`,
-        [rideId]
+        `UPDATE rides SET status = 'DRIVER_ACCEPTED', driver_id = $1, updated_at = NOW() WHERE id = $2`,
+        [driverId, rideId]
       );
       const fullRideRes = await client.query(
         `SELECT r.*, u.name as driver_name, u.phone as driver_phone, d.vehicle_model, d.license_plate, d.rating as driver_rating
@@ -574,6 +613,51 @@ export async function acceptOffer(rideId, driverId) {
           JSON.stringify({ rideId, driverId, assignmentId, status: 'DRIVER_ACCEPTED' })
         ]
       );
+
+      // 6. Check for any other concurrent rides assigned or offered to this driver
+      const conflictingRidesRes = await client.query(
+        `SELECT DISTINCT r.id, r.passenger_id
+         FROM rides r
+         LEFT JOIN ride_assignments a ON a.ride_id = r.id AND a.driver_id = $1
+         WHERE (r.driver_id = $1 OR a.driver_id = $1)
+           AND r.id != $2
+           AND r.status IN ('DRIVER_ASSIGNED', 'REQUESTED', 'PENDING')`,
+        [driverId, rideId]
+      );
+      const conflictingRides = conflictingRidesRes.rows;
+
+      if (conflictingRides.length > 0) {
+        const conflictingIds = conflictingRides.map(c => c.id);
+        logger.info({ driverId, acceptedRideId: rideId, conflictingIds }, 'Revoking conflicting assignments and resetting rides for immediate auto re-dispatch');
+
+        // Revoke active OFFERED assignments for this driver on conflicting rides
+        await client.query(
+          `UPDATE ride_assignments 
+           SET status = 'REVOKED', responded_at = NOW() 
+           WHERE driver_id = $1 AND ride_id = ANY($2::text[]) AND status = 'OFFERED'`,
+          [driverId, conflictingIds]
+        );
+
+        // Reset conflicting rides to REQUESTED with driver_id = NULL
+        await client.query(
+          `UPDATE rides 
+           SET status = 'REQUESTED', driver_id = NULL, updated_at = NOW() 
+           WHERE id = ANY($1::text[]) AND status IN ('DRIVER_ASSIGNED', 'PENDING', 'REQUESTED')`,
+          [conflictingIds]
+        );
+
+        for (const cr of conflictingRides) {
+          await client.query(
+            `INSERT INTO outbox_events (id, aggregate_type, aggregate_id, event_type, payload, status)
+             VALUES ($1, 'RIDE', $2, 'RIDE_REDISPATCH_NEEDED', $3, 'PENDING')`,
+            [
+              `outbox-${Date.now()}-${Math.random().toString(36).substring(2, 6)}`,
+              cr.id,
+              JSON.stringify({ rideId: cr.id, previousDriverId: driverId, reason: 'Driver accepted another concurrent ride offer' })
+            ]
+          );
+        }
+      }
 
       await client.query('COMMIT');
       await invalidateRide(rideId);
@@ -599,6 +683,37 @@ export async function acceptOffer(rideId, driverId) {
         ride: updatedRide,
       });
 
+      // Automatically cascade and re-dispatch all conflicting rides to the next nearest available drivers!
+      if (conflictingRides.length > 0) {
+        for (const cr of conflictingRides) {
+          await invalidateRide(cr.id);
+
+          publishRealtimeEvent(`ride:${cr.id}`, 'ride:status:changed', {
+            rideId: cr.id,
+            status: 'REQUESTED',
+            driver_id: null,
+            message: 'Driver accepted another request. Automatically re-routing your ride to the next nearest driver...',
+          });
+
+          if (cr.passenger_id) {
+            publishRealtimeEvent(`user:${cr.passenger_id}`, 'ride:status:changed', {
+              rideId: cr.id,
+              status: 'REQUESTED',
+              driver_id: null,
+              message: 'Driver accepted another request. Automatically re-routing your ride to the next nearest driver...',
+            });
+          }
+
+          // Trigger asynchronous re-dispatch to next nearest driver
+          logger.info({ conflictingRideId: cr.id }, 'Triggering automatic dispatch of conflicting ride to next nearest driver');
+          dispatchRide(cr.id).then(res => {
+            logger.info({ conflictingRideId: cr.id, dispatched: res?.dispatched }, 'Conflicting ride re-dispatched to next nearest driver');
+          }).catch(err => {
+            logger.error(err, { conflictingRideId: cr.id }, 'Error auto re-dispatching conflicting ride');
+          });
+        }
+      }
+
       logger.info({ rideId, driverId }, 'Driver successfully accepted offer');
       return { success: true, status: 'DRIVER_ACCEPTED', ride: updatedRide };
     } catch (err) {
@@ -622,6 +737,20 @@ export async function acceptOffer(rideId, driverId) {
   if (ride) {
     ride.status = 'DRIVER_ACCEPTED';
     ride.updated_at = new Date().toISOString();
+  }
+
+  // Revoke and re-dispatch conflicting in-memory assignments
+  const conflictingMemAsgns = assignmentsStore.filter(a => a.driver_id === driverId && a.ride_id !== rideId && a.status === 'OFFERED');
+  for (const cAsgn of conflictingMemAsgns) {
+    cAsgn.status = 'REVOKED';
+    cAsgn.responded_at = new Date().toISOString();
+  }
+  const conflictingMemRides = ridesStore.filter(r => (r.driver_id === driverId || conflictingMemAsgns.some(a => a.ride_id === r.id)) && r.id !== rideId && ['DRIVER_ASSIGNED', 'PENDING', 'REQUESTED'].includes(r.status));
+  for (const cr of conflictingMemRides) {
+    cr.status = 'REQUESTED';
+    cr.driver_id = null;
+    cr.updated_at = new Date().toISOString();
+    dispatchRide(cr.id).catch(() => {});
   }
 
   return { success: true, status: 'DRIVER_ACCEPTED', source: 'InMemoryStore', ride };
@@ -740,6 +869,26 @@ export async function expireOffer(rideId) {
     try {
       client = await pool.connect();
       await client.query('BEGIN');
+
+      // Check current ride status first!
+      const rideRes = await client.query('SELECT * FROM rides WHERE id = $1 FOR UPDATE', [rideId]);
+      if (rideRes.rows.length === 0) {
+        await client.query('ROLLBACK');
+        return { success: false, message: 'Ride not found' };
+      }
+      const ride = rideRes.rows[0];
+
+      // If the ride is already accepted, on trip, completed, or cancelled:
+      // DO NOT reset ride status and DO NOT re-dispatch to another driver!
+      if (['DRIVER_ACCEPTED', 'DRIVER_ARRIVED', 'IN_PROGRESS', 'COMPLETED', 'CANCELLED', 'ABORTED_SOS'].includes(ride.status)) {
+        await client.query(
+          `UPDATE ride_assignments SET status = 'REVOKED', responded_at = NOW() WHERE ride_id = $1 AND status = 'OFFERED'`,
+          [rideId]
+        );
+        await client.query('COMMIT');
+        logger.info({ rideId, status: ride.status }, 'Offer expired after ride was already accepted/completed. Re-dispatch suppressed.');
+        return { success: true, message: `Ride is in ${ride.status}. Re-dispatch suppressed.` };
+      }
 
       // Find expired offered assignment
       const asgnRes = await client.query(

@@ -56,8 +56,8 @@ export function rateLimiter(options = {}) {
   const refillRatePerSec = options.refillRatePerSec || 5;
 
   return async (req, res, next) => {
-    // Exempt health probes and metrics from rate limiting
-    if (req.path.startsWith('/health') || req.path === '/api/v1/metrics') {
+    // Exempt health probes, metrics, and chaos management from rate limiting
+    if (req.path.includes('/health') || req.path.includes('/metrics') || req.path.includes('/chaos')) {
       return next();
     }
 

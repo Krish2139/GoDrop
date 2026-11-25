@@ -6,7 +6,8 @@ import dotenv from 'dotenv';
 import { logger } from './logger.js';
 import { correlationIdMiddleware } from './middleware/correlationId.js';
 import { rateLimiter } from './middleware/rateLimiter.js';
-import { authenticateJwt, authorizeRoles } from './middleware/auth.js';
+import { authenticateJwt, authorizeRoles, verifyAccountActive, JWT_SECRET } from './middleware/auth.js';
+import jwt from 'jsonwebtoken';
 import { 
   createBreakerProxy, 
   rideServiceBreaker, 
@@ -61,13 +62,50 @@ app.use((req, res, next) => {
 });
 
 // Distributed Token Bucket Rate Limiter
-app.use(rateLimiter({ capacity: 100, refillRatePerSec: 5 }));
+app.use(rateLimiter({ capacity: 300, refillRatePerSec: 25 }));
 
 // System & Health Endpoints (Public Health Checks)
 app.use(systemRouter);
+app.use('/api/v1', systemRouter);
 
 // Authentication Endpoints (/api/v1/auth)
 app.use('/api/v1/auth', authRouter);
+
+// Identity header extraction & account liveness enforcement middleware
+app.use(async (req, res, next) => {
+  if (req.headers.authorization && req.headers.authorization.startsWith('Bearer ')) {
+    try {
+      const token = req.headers.authorization.split(' ')[1];
+      const payload = jwt.verify(token, JWT_SECRET);
+      if (payload && payload.id) {
+        const check = await verifyAccountActive(payload);
+        if (!check.active) {
+          return res.status(401).json({
+            success: false,
+            error: 'AccountRemoved',
+            accountSuspended: true,
+            message: check.reason,
+          });
+        }
+        req.headers['x-user-id'] = payload.id;
+        req.headers['x-user-role'] = payload.role;
+      }
+    } catch (e) {
+      // Fallback: extract claims only if non-protected route without throwing
+      try {
+        const parts = req.headers.authorization.split(' ');
+        if (parts.length === 2 && parts[1].includes('.')) {
+          const payload = JSON.parse(Buffer.from(parts[1].split('.')[1], 'base64').toString());
+          if (payload && payload.id) {
+            req.headers['x-user-id'] = payload.id;
+            req.headers['x-user-role'] = payload.role;
+          }
+        }
+      } catch (e2) {}
+    }
+  }
+  next();
+});
 
 // Passenger Domain Endpoints (RBAC Protected: PASSENGER, ADMIN, DRIVER)
 app.use('/api/v1/passengers', authenticateJwt, authorizeRoles('PASSENGER', 'ADMIN', 'DRIVER'), passengersRouter);
@@ -78,27 +116,17 @@ app.post('/api/v1/rides', authenticateJwt, authorizeRoles('PASSENGER', 'ADMIN', 
 // Driver Availability & Location: Drivers, Admins, and Passengers can update driver status/GPS
 app.patch('/api/v1/drivers/:id/availability', authenticateJwt, authorizeRoles('DRIVER', 'ADMIN', 'PASSENGER'), createBreakerProxy(driverServiceBreaker, DRIVER_SERVICE_URL));
 app.patch('/api/v1/drivers/:id/location', authenticateJwt, authorizeRoles('DRIVER', 'ADMIN', 'PASSENGER'), createBreakerProxy(driverServiceBreaker, DRIVER_SERVICE_URL));
+app.post('/api/v1/drivers/:id/rate', authenticateJwt, authorizeRoles('PASSENGER', 'ADMIN', 'DRIVER'), createBreakerProxy(driverServiceBreaker, DRIVER_SERVICE_URL));
 
 // General Proxy Routes with Circuit Breaker Protection
 // All other /api/v1/rides/* traffic -> Ride Service (:5001)
 app.use('/api/v1/rides', createBreakerProxy(rideServiceBreaker, RIDE_SERVICE_URL));
 
-// Identity header extraction middleware
-app.use((req, res, next) => {
-  if (req.headers.authorization) {
-    try {
-      const parts = req.headers.authorization.split(' ');
-      if (parts.length === 2 && parts[1].includes('.')) {
-        const payload = JSON.parse(Buffer.from(parts[1].split('.')[1], 'base64').toString());
-        if (payload && payload.id) {
-          req.headers['x-user-id'] = payload.id;
-          req.headers['x-user-role'] = payload.role;
-        }
-      }
-    } catch (e) {}
-  }
-  next();
-});
+// In-Ride Emergency SOS & Rescue Dispatch -> Ride Service (:5001)
+app.use('/api/v1/sos', createBreakerProxy(rideServiceBreaker, RIDE_SERVICE_URL));
+app.use('/api/sos', createBreakerProxy(rideServiceBreaker, RIDE_SERVICE_URL));
+app.use('/api/v1/admin/sos', createBreakerProxy(rideServiceBreaker, RIDE_SERVICE_URL));
+app.use('/api/admin/sos', createBreakerProxy(rideServiceBreaker, RIDE_SERVICE_URL));
 
 // All other /api/v1/drivers/* traffic -> Driver Service (:5002)
 app.use('/api/v1/drivers', createBreakerProxy(driverServiceBreaker, DRIVER_SERVICE_URL));

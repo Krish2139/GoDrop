@@ -1,31 +1,38 @@
 import React, { useState, useEffect } from 'react';
+import { useNavigate } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
 import apiClient from '../api/client';
-import { 
-  Navigation, 
-  MapPin, 
-  Power, 
-  RefreshCw, 
-  CheckCircle2, 
-  XCircle, 
-  AlertCircle, 
-  Car, 
-  Clock, 
-  DollarSign, 
-  Compass, 
-  Star, 
-  ShieldCheck, 
-  Play, 
-  Flag 
+import {
+  Navigation,
+  MapPin,
+  Power,
+  RefreshCw,
+  CheckCircle2,
+  XCircle,
+  AlertCircle,
+  Car,
+  Clock,
+  DollarSign,
+  Compass,
+  Star,
+  ShieldCheck,
+  ShieldAlert,
+  Play,
+  Flag,
+  ChevronDown,
+  ChevronUp,
+  X
 } from 'lucide-react';
 import RideLifecycleTimeline from '../components/RideLifecycleTimeline';
-import { 
-  getSocket, 
-  joinRideRoom, 
-  leaveRideRoom, 
-  onDispatchOffer, 
-  onRideStatusChanged, 
-  streamDriverLocation 
+import RideMap from '../components/RideMap';
+import {
+  getSocket,
+  joinRideRoom,
+  leaveRideRoom,
+  onDispatchOffer,
+  onRideStatusChanged,
+  onDriverSuspendedSos,
+  streamDriverLocation
 } from '../services/socket';
 import './DriverPortal.css';
 
@@ -38,11 +45,72 @@ const GPS_WAYPOINTS = [
   { name: 'GIFT City Gandhinagar', lat: 23.1598, lng: 72.6842, heading: 15 },
 ];
 
+const resolveDriverRides = (allRides, drv, usr) => {
+  if (!allRides || !drv) return { activeRide: null, historyRides: [] };
+
+  const matchesDriver = (id) => (
+    id === drv.id || id === drv.user_id || (usr?.id && id === usr.id)
+  );
+
+  // 1. Identify active ride for this driver:
+  // Must be currently assigned/accepted by this driver and not rejected
+  const activeRide = allRides.find(r => {
+    if (!matchesDriver(r.driver_id)) return false;
+    const myAsgn = Array.isArray(r.assignments) ? r.assignments.find(a => matchesDriver(a.driver_id)) : null;
+    if (myAsgn && myAsgn.status === 'REJECTED') return false;
+    return ['DRIVER_ASSIGNED', 'DRIVER_ACCEPTED', 'DRIVER_ARRIVED', 'IN_PROGRESS'].includes(r.status);
+  }) || null;
+
+  // 2. Resolve history rides:
+  // Completed by this driver, or cancelled (either cancelled by passenger or declined/cancelled by driver)
+  const historyRides = allRides.reduce((acc, r) => {
+    const isFinalDriver = matchesDriver(r.driver_id);
+    const myAsgn = Array.isArray(r.assignments) ? r.assignments.find(a => matchesDriver(a.driver_id)) : null;
+
+    if (!isFinalDriver && !myAsgn) return acc;
+
+    let displayStatus = null;
+
+    if (isFinalDriver && r.status === 'COMPLETED') {
+      displayStatus = 'COMPLETED';
+    } else if (myAsgn && (myAsgn.status === 'REJECTED' || myAsgn.status === 'EXPIRED')) {
+      // Driver declined or expired the incoming ride request
+      displayStatus = 'CANCELLED';
+    } else if (r.status === 'CANCELLED' && (isFinalDriver || myAsgn)) {
+      displayStatus = 'CANCELLED';
+    }
+
+    if (displayStatus) {
+      acc.push({
+        ...r,
+        driver_display_status: displayStatus,
+        driver_note: myAsgn?.status === 'REJECTED' ? 'Request Declined' : myAsgn?.status === 'EXPIRED' ? 'Offer Expired' : null,
+      });
+    }
+
+    return acc;
+  }, []);
+
+  return { activeRide, historyRides };
+};
+
 const DriverPortal = () => {
-  const { user, switchDriver, register, knownDrivers } = useAuth();
+  const { user, logout } = useAuth();
+  const navigate = useNavigate();
+
+  const forceSuspendLogout = (reasonMsg) => {
+    if (reasonMsg) {
+      sessionStorage.setItem('rideflow_auth_error', reasonMsg);
+    }
+    logout();
+    navigate('/auth?role=driver', { replace: true });
+  };
   const [driver, setDriver] = useState(null);
   const [rides, setRides] = useState([]);
+  const [tripFilter, setTripFilter] = useState('ALL'); // 'ALL' | 'COMPLETED' | 'CANCELLED'
+  const [showAllTrips, setShowAllTrips] = useState(false);
   const [activeRide, setActiveRide] = useState(null);
+  const [completedTripModal, setCompletedTripModal] = useState(null);
   const [offers, setOffers] = useState([]);
   const [activeOffer, setActiveOffer] = useState(null);
   const [countdown, setCountdown] = useState(30);
@@ -51,59 +119,10 @@ const DriverPortal = () => {
   const [message, setMessage] = useState(null);
   const [error, setError] = useState(null);
 
-  // Manual Driver Management State
-  const [showAddDriver, setShowAddDriver] = useState(false);
-  const [newDrvName, setNewDrvName] = useState('');
-  const [newDrvEmail, setNewDrvEmail] = useState('');
-  const [newDrvVehicle, setNewDrvVehicle] = useState('Toyota Innova (Silver)');
-  const [newDrvPlate, setNewDrvPlate] = useState('GJ-01-XY-1234');
-  const [newDrvPassword, setNewDrvPassword] = useState('driver123');
-
   // GPS Simulation State (Default: Ahmedabad SG Highway)
   const [simLat, setSimLat] = useState(23.0275);
   const [simLng, setSimLng] = useState(72.5076);
   const [simHeading, setSimHeading] = useState(90);
-
-  const handleSwitchDriver = async (email) => {
-    setActionLoading(true);
-    setError(null);
-    try {
-      const loggedInUser = await switchDriver(email);
-      setMessage(`Switched terminal to driver: ${loggedInUser.name} (${email})`);
-      await loadDriverData(loggedInUser);
-    } catch (err) {
-      setError(err.message || 'Failed to switch driver account');
-    } finally {
-      setActionLoading(false);
-    }
-  };
-
-  const handleCreateNewDriver = async (e) => {
-    e.preventDefault();
-    try {
-      setActionLoading(true);
-      setError(null);
-      const registeredUser = await register({
-        name: newDrvName,
-        email: newDrvEmail,
-        password: newDrvPassword,
-        role: 'DRIVER',
-        vehicle_model: newDrvVehicle,
-        license_plate: newDrvPlate,
-        latitude: 23.0275,
-        longitude: 72.5076,
-      });
-      setMessage(`New driver registered & active: ${newDrvName} (${newDrvVehicle})`);
-      setShowAddDriver(false);
-      setNewDrvName('');
-      setNewDrvEmail('');
-      await loadDriverData(registeredUser);
-    } catch (err) {
-      setError(err.response?.data?.message || err.message || 'Failed to register driver');
-    } finally {
-      setActionLoading(false);
-    }
-  };
 
   const loadDriverData = async (userOverride = null) => {
     const activeUser = userOverride || user;
@@ -127,17 +146,16 @@ const DriverPortal = () => {
         const driverOffers = (offersRes.data.success && offersRes.data.data) ? offersRes.data.data : [];
         setOffers(driverOffers);
 
-        // Fetch rides
-        const ridesRes = await apiClient.get('/rides');
+        // Fetch rides with driver_id for optimal backend filtering and assignment resolution
+        const ridesRes = await apiClient.get('/rides', {
+          params: d?.id ? { driver_id: d.id } : {}
+        });
         if (ridesRes.data.success) {
           const allRides = ridesRes.data.data || [];
-          setRides(allRides);
 
-          // Check if there is an active ride assigned/in-progress for THIS specific driver
-          const myActive = allRides.find(
-            r => r.driver_id === d.id && ['DRIVER_ASSIGNED', 'DRIVER_ACCEPTED', 'DRIVER_ARRIVED', 'IN_PROGRESS'].includes(r.status)
-          );
-          setActiveRide(myActive || null);
+          const { activeRide: myActive, historyRides: myDriverHistory } = resolveDriverRides(allRides, d, activeUser);
+          setActiveRide(myActive);
+          setRides(myDriverHistory);
 
           // If there is an active ride in DRIVER_ASSIGNED, but offers list is empty, synthesize offer
           if (myActive && myActive.status === 'DRIVER_ASSIGNED' && driverOffers.length === 0) {
@@ -154,7 +172,13 @@ const DriverPortal = () => {
         }
       }
     } catch (err) {
-      setError(err.response?.data?.message || 'Error loading driver profile');
+      const status = err.response?.status;
+      const errData = err.response?.data;
+      if (status === 401 || (status === 404 && errData?.accountSuspended)) {
+        forceSuspendLogout(errData?.message || 'Your driver account has been suspended and removed from the system.');
+        return;
+      }
+      setError(errData?.message || 'Error loading driver profile');
     } finally {
       setLoading(false);
     }
@@ -210,18 +234,7 @@ const DriverPortal = () => {
       // Instant Dispatch Offer Listener
       const unsubOffer = onDispatchOffer((offer) => {
         console.log('⚡ Incoming dispatch offer received via Socket.IO:', offer);
-        setActiveOffer({
-          id: offer.assignmentId,
-          assignment_id: offer.assignmentId,
-          ride_id: offer.rideId,
-          rideId: offer.rideId,
-          pickup_address: offer.pickupAddress,
-          destination_address: offer.destinationAddress,
-          distance_km: offer.distanceKm,
-          fare: offer.fare,
-          remaining_seconds: offer.remainingSeconds || 30,
-        });
-        setCountdown(offer.remainingSeconds || 30);
+        loadDriverData();
       });
 
       // Realtime Ride State Change Listener
@@ -231,9 +244,32 @@ const DriverPortal = () => {
         }
       });
 
+      // Realtime Driver Verification Approval Listener
+      const socket = getSocket();
+      const handleApprovalUpdate = (data) => {
+        if (data && (data.driverId === driver?.id || data.driver?.id === driver?.id)) {
+          loadDriverData();
+        }
+      };
+      if (socket) {
+        socket.on('driver:approval:updated', handleApprovalUpdate);
+      }
+
+      // Realtime Driver Suspended via In-Ride Emergency SOS Listener
+      const unsubSuspended = onDriverSuspendedSos((data) => {
+        console.warn('⛔ Driver suspended via SOS:', data);
+        if (!data?.driverId || data.driverId === driver?.id || data.userId === user?.id) {
+          forceSuspendLogout(data?.reason || 'Your account has been suspended and removed due to an in-ride emergency report.');
+        }
+      });
+
       return () => {
         unsubOffer();
         unsubRide();
+        unsubSuspended();
+        if (socket) {
+          socket.off('driver:approval:updated', handleApprovalUpdate);
+        }
       };
     }
   }, [driver?.id]);
@@ -250,18 +286,18 @@ const DriverPortal = () => {
             setActiveOffer(list[0]);
           }
         }
-      }).catch(() => {});
+      }).catch(() => { });
 
-      apiClient.get('/rides').then(res => {
-        if (res.data?.success) {
+      apiClient.get('/rides', {
+        params: driver?.id ? { driver_id: driver.id } : {}
+      }).then(res => {
+        if (res.data?.success && driver?.id) {
           const allRides = res.data.data || [];
-          setRides(allRides);
-          const myActive = allRides.find(
-            r => r.driver_id === driver.id && ['DRIVER_ASSIGNED', 'DRIVER_ACCEPTED', 'DRIVER_ARRIVED', 'IN_PROGRESS'].includes(r.status)
-          );
-          setActiveRide(myActive || null);
+          const { activeRide: myActive, historyRides: myDriverHistory } = resolveDriverRides(allRides, driver, user);
+          setActiveRide(myActive);
+          setRides(myDriverHistory);
         }
-      }).catch(() => {});
+      }).catch(() => { });
     }, 2500);
 
     return () => clearInterval(pollInterval);
@@ -300,7 +336,7 @@ const DriverPortal = () => {
         if (res.data.success) {
           setOffers(res.data.data || []);
         }
-      }).catch(() => {});
+      }).catch(() => { });
     }, 3500);
     return () => clearInterval(pollInterval);
   }, [driver?.id]);
@@ -311,6 +347,18 @@ const DriverPortal = () => {
     setActionLoading(true);
     setError(null);
     setMessage(null);
+
+    if (driver.status === 'SUSPENDED_SOS') {
+      setError('⛔ Your account is SUSPENDED due to an emergency safety incident. Action not permitted.');
+      setActionLoading(false);
+      return;
+    }
+
+    if (driver.approval_status === 'PENDING') {
+      setError('Your driver profile is pending administrator verification. You cannot go online until approved.');
+      setActionLoading(false);
+      return;
+    }
 
     const targetStatus = driver.status === 'AVAILABLE' ? 'OFFLINE' : 'AVAILABLE';
     try {
@@ -368,6 +416,10 @@ const DriverPortal = () => {
 
   // Accept Ride Offer
   const handleAcceptRide = async (rideId) => {
+    if (driver?.status === 'SUSPENDED_SOS') {
+      setError('⛔ Your account is SUSPENDED due to an emergency safety incident. Action not permitted.');
+      return;
+    }
     setActionLoading(true);
     setError(null);
     try {
@@ -408,15 +460,31 @@ const DriverPortal = () => {
   // Trip Status Transitions
   const handleTripAction = async (endpoint, successText) => {
     if (!activeRide) return;
+    if (driver?.status === 'SUSPENDED_SOS') {
+      setError('⛔ Your account is SUSPENDED due to an emergency safety incident. Action not permitted.');
+      return;
+    }
     setActionLoading(true);
     setError(null);
     try {
       const res = await apiClient.post(`/rides/${activeRide.id}/${endpoint}`);
       if (res.data.success) {
         setMessage(successText);
-        if (endpoint === 'complete' && activeRide.destination_latitude && activeRide.destination_longitude) {
-          setSimLat(activeRide.destination_latitude);
-          setSimLng(activeRide.destination_longitude);
+        if (endpoint === 'complete') {
+          const finishedRide = res.data?.data || activeRide;
+          setCompletedTripModal({
+            id: finishedRide.id || activeRide.id,
+            pickup_address: finishedRide.pickup_address || activeRide.pickup_address,
+            destination_address: finishedRide.destination_address || activeRide.destination_address,
+            fare_amount: finishedRide.fare_amount || activeRide.fare_amount,
+            distance_km: finishedRide.distance_km || activeRide.distance_km,
+            passenger_name: finishedRide.passenger_name || activeRide.passenger_name || 'Passenger',
+            vehicle_type: finishedRide.vehicle_type || activeRide.vehicle_type || 'Ride',
+          });
+          if (activeRide.destination_latitude && activeRide.destination_longitude) {
+            setSimLat(activeRide.destination_latitude);
+            setSimLng(activeRide.destination_longitude);
+          }
         } else if (endpoint === 'arrived' && activeRide.pickup_latitude && activeRide.pickup_longitude) {
           setSimLat(activeRide.pickup_latitude);
           setSimLng(activeRide.pickup_longitude);
@@ -431,485 +499,660 @@ const DriverPortal = () => {
   };
 
   return (
-    <div className="container driver-portal-page">
-      {/* Header Banner */}
-      <div className="portal-header">
-        <div>
-          <span className="badge badge-info">Module B</span>
-          <h1 className="portal-title">Driver Dispatch Terminal</h1>
-          <p className="portal-subtitle">
-            Welcome, <b>{driver?.name || user?.name || 'Rajesh Kumar'}</b>. Manage availability, simulated GPS telemetry, and incoming dispatch offers.
-          </p>
+    <div className="portal-page-wrapper">
+      <div className="container driver-portal-page">
+        {/* Header Banner */}
+        <div className="portal-header">
+          <h1 className="portal-title">Welcome, {driver?.name || user?.name || 'Driver'}</h1>
         </div>
-        <button onClick={loadDriverData} className="btn btn-outline btn-refresh" disabled={loading}>
-          <RefreshCw size={16} className={loading ? 'spin' : ''} />
-          <span>Refresh</span>
-        </button>
-      </div>
 
-      {/* Alerts */}
-      {message && (
-        <div className="portal-alert alert-success">
-          <CheckCircle2 size={18} />
-          <span>{message}</span>
-        </div>
-      )}
-      {error && (
-        <div className="portal-alert alert-error">
-          <AlertCircle size={18} />
-          <span>{error}</span>
-        </div>
-      )}
-
-      {/* Ahmedabad Driver Fleet Account Switcher */}
-      <div className="card fleet-switcher-card" style={{ marginBottom: '1.5rem', background: '#f8fafc', border: '1px solid #e2e8f0', padding: '1.25rem' }}>
-        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '0.75rem', flexWrap: 'wrap', gap: '0.5rem' }}>
-          <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
-            <Car size={18} style={{ color: '#2563eb' }} />
-            <h3 style={{ margin: 0, fontSize: '0.95rem', fontWeight: 600 }}>Switch Active Driver Account (Ahmedabad Fleet)</h3>
+        {/* Error Alert */}
+        {error && (
+          <div className="portal-alert alert-error">
+            <AlertCircle size={18} />
+            <span>{error}</span>
           </div>
-          <button
-            type="button"
-            onClick={() => setShowAddDriver(!showAddDriver)}
-            className="btn btn-sm btn-outline"
-            style={{ fontSize: '0.8rem', padding: '4px 10px' }}
-          >
-            {showAddDriver ? 'Close Registration' : '+ Register New Driver Manually'}
-          </button>
-        </div>
-
-        {/* 5 Driver Selection Cards */}
-        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(210px, 1fr))', gap: '0.75rem' }}>
-          {(knownDrivers || []).map((d) => {
-            const isCurrent = user?.email === d.email;
-            return (
-              <button
-                key={d.id}
-                type="button"
-                onClick={() => handleSwitchDriver(d.email)}
-                disabled={actionLoading}
-                style={{
-                  padding: '0.85rem',
-                  borderRadius: '8px',
-                  border: isCurrent ? '2px solid #2563eb' : '1px solid #cbd5e1',
-                  background: isCurrent ? '#eff6ff' : '#ffffff',
-                  textAlign: 'left',
-                  cursor: 'pointer',
-                  transition: 'all 0.15s ease',
-                  boxShadow: isCurrent ? '0 2px 4px rgba(37,99,235,0.12)' : 'none',
-                }}
-              >
-                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '4px' }}>
-                  <span style={{ fontWeight: 600, fontSize: '0.88rem', color: isCurrent ? '#1d4ed8' : '#1e293b' }}>{d.name}</span>
-                  {isCurrent && <span style={{ fontSize: '0.65rem', background: '#2563eb', color: '#fff', padding: '1px 5px', borderRadius: '3px' }}>ACTIVE</span>}
-                </div>
-                <div style={{ fontSize: '0.75rem', color: '#475569', marginBottom: '3px' }}>{d.vehicle}</div>
-                <div style={{ fontSize: '0.7rem', color: '#64748b', display: 'flex', justifyContent: 'space-between' }}>
-                  <code>{d.plate}</code>
-                  <span>{d.location}</span>
-                </div>
-              </button>
-            );
-          })}
-        </div>
-
-        {/* Inline Add Driver Form */}
-        {showAddDriver && (
-          <form onSubmit={handleCreateNewDriver} style={{ marginTop: '1rem', padding: '1rem', background: '#fff', borderRadius: '8px', border: '1px dashed #94a3b8' }}>
-            <h4 style={{ margin: '0 0 0.75rem 0', fontSize: '0.88rem', fontWeight: 600 }}>Register New Custom Driver Account</h4>
-            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))', gap: '0.75rem' }}>
-              <div>
-                <label style={{ fontSize: '0.75rem', fontWeight: 500, display: 'block', marginBottom: '2px' }}>Driver Name</label>
-                <input
-                  type="text"
-                  required
-                  placeholder="e.g. Hardik Pandya"
-                  value={newDrvName}
-                  onChange={(e) => setNewDrvName(e.target.value)}
-                  style={{ width: '100%', padding: '6px 8px', borderRadius: '4px', border: '1px solid #cbd5e1' }}
-                />
-              </div>
-              <div>
-                <label style={{ fontSize: '0.75rem', fontWeight: 500, display: 'block', marginBottom: '2px' }}>Email Address</label>
-                <input
-                  type="email"
-                  required
-                  placeholder="e.g. hardik@rideflow.io"
-                  value={newDrvEmail}
-                  onChange={(e) => setNewDrvEmail(e.target.value)}
-                  style={{ width: '100%', padding: '6px 8px', borderRadius: '4px', border: '1px solid #cbd5e1' }}
-                />
-              </div>
-              <div>
-                <label style={{ fontSize: '0.75rem', fontWeight: 500, display: 'block', marginBottom: '2px' }}>Vehicle Model & Color</label>
-                <input
-                  type="text"
-                  required
-                  placeholder="e.g. Toyota Innova (Silver)"
-                  value={newDrvVehicle}
-                  onChange={(e) => setNewDrvVehicle(e.target.value)}
-                  style={{ width: '100%', padding: '6px 8px', borderRadius: '4px', border: '1px solid #cbd5e1' }}
-                />
-              </div>
-              <div>
-                <label style={{ fontSize: '0.75rem', fontWeight: 500, display: 'block', marginBottom: '2px' }}>License Plate</label>
-                <input
-                  type="text"
-                  required
-                  placeholder="e.g. GJ-01-XY-5555"
-                  value={newDrvPlate}
-                  onChange={(e) => setNewDrvPlate(e.target.value)}
-                  style={{ width: '100%', padding: '6px 8px', borderRadius: '4px', border: '1px solid #cbd5e1' }}
-                />
-              </div>
-            </div>
-            <div style={{ marginTop: '0.75rem', display: 'flex', justifyContent: 'flex-end', gap: '0.5rem' }}>
-              <button type="button" onClick={() => setShowAddDriver(false)} className="btn btn-sm btn-outline">Cancel</button>
-              <button type="submit" disabled={actionLoading} className="btn btn-sm btn-primary">
-                Register & Switch to This Driver
-              </button>
-            </div>
-          </form>
         )}
-      </div>
 
-      {/* Live Incoming Ride Offer Banner (Auto-Dispatch Engine) */}
-      {activeOffer && (
-        <div className="incoming-offer-banner">
-          <div className="offer-header">
-            <div className="offer-title">
-              <Car size={22} />
-              <span>Incoming Ride Offer!</span>
+        {/* Live Incoming Ride Offer Banner (Auto-Dispatch Engine) */}
+        {offers && offers.length > 1 ? (
+          <div className="incoming-offer-banner">
+            <div className="offer-header">
+              <div className="offer-title">
+                <Car size={22} />
+                <span>Incoming Ride Offers ({offers.length} Requests Available)</span>
+              </div>
+              <div className="offer-timer-badge">
+                <Clock size={16} />
+                <span>Expires in {countdown}s</span>
+              </div>
             </div>
-            <div className="offer-timer-badge">
-              <Clock size={16} />
-              <span>Expires in {countdown}s</span>
+
+            <div className="offer-progress-track">
+              <div
+                className="offer-progress-fill"
+                style={{ width: `${Math.max(0, (countdown / 30) * 100)}%` }}
+              ></div>
             </div>
-          </div>
 
-          <div className="offer-progress-track">
-            <div 
-              className="offer-progress-fill" 
-              style={{ width: `${Math.max(0, (countdown / 30) * 100)}%` }}
-            ></div>
-          </div>
+            <p style={{ margin: '0 0 1rem 0', fontSize: '0.9rem', color: 'rgba(255,255,255,0.9)' }}>
+              Multiple concurrent passenger requests received for your location. Select and accept any ride offer below (the others will immediately re-route to the next nearest driver):
+            </p>
 
-          <div className="offer-content-grid">
-            <div className="offer-locations">
-              <div className="location-row">
-                <span className="dot green"></span>
-                <div>
-                  <span className="loc-label" style={{ color: 'rgba(255,255,255,0.8)' }}>Pickup:</span>
-                  <p className="loc-addr" style={{ color: '#FFFFFF', fontWeight: 600 }}>{activeOffer.pickup_address}</p>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '1rem' }}>
+              {offers.map((off, idx) => (
+                <div
+                  key={off.id || off.ride_id || idx}
+                  style={{
+                    background: 'rgba(255, 255, 255, 0.12)',
+                    borderRadius: '12px',
+                    padding: '1.25rem',
+                    border: '1px solid rgba(255, 255, 255, 0.25)',
+                  }}
+                >
+                  <div className="offer-content-grid" style={{ marginBottom: '1rem' }}>
+                    <div className="offer-locations">
+                      <div className="location-row">
+                        <span className="dot green"></span>
+                        <div>
+                          <span className="loc-label" style={{ color: 'rgba(255,255,255,0.8)' }}>Pickup:</span>
+                          <p className="loc-addr" style={{ color: '#FFFFFF', fontWeight: 600 }}>{off.pickup_address}</p>
+                        </div>
+                      </div>
+                      <div className="location-row">
+                        <span className="dot red"></span>
+                        <div>
+                          <span className="loc-label" style={{ color: 'rgba(255,255,255,0.8)' }}>Destination:</span>
+                          <p className="loc-addr" style={{ color: '#FFFFFF', fontWeight: 600 }}>{off.destination_address}</p>
+                        </div>
+                      </div>
+                    </div>
+
+                    <div className="offer-metrics">
+                      <span style={{ fontSize: '0.85rem', color: 'rgba(255,255,255,0.85)' }}>
+                        Passenger: <b>{off.passenger_name || 'Passenger'}</b>
+                        {off.distance_km ? ` (${off.distance_km} km away)` : ''}
+                      </span>
+                      <div className="offer-fare">₹{off.fare_amount}</div>
+                    </div>
+                  </div>
+
+                  <div className="offer-actions">
+                    <button
+                      onClick={() => handleAcceptRide(off.ride_id)}
+                      className="btn-accept-offer"
+                      disabled={actionLoading}
+                    >
+                      <CheckCircle2 size={18} />
+                      <span>Accept Ride Offer</span>
+                    </button>
+                    <button
+                      onClick={() => handleRejectRide(off.ride_id)}
+                      className="btn-reject-offer"
+                      disabled={actionLoading}
+                    >
+                      <XCircle size={18} />
+                      <span>Decline</span>
+                    </button>
+                  </div>
                 </div>
+              ))}
+            </div>
+          </div>
+        ) : activeOffer && (
+          <div className="incoming-offer-banner">
+            <div className="offer-header">
+              <div className="offer-title">
+                <Car size={22} />
+                <span>Incoming Ride Offer!</span>
               </div>
-              <div className="location-row">
-                <span className="dot red"></span>
-                <div>
-                  <span className="loc-label" style={{ color: 'rgba(255,255,255,0.8)' }}>Destination:</span>
-                  <p className="loc-addr" style={{ color: '#FFFFFF', fontWeight: 600 }}>{activeOffer.destination_address}</p>
-                </div>
+              <div className="offer-timer-badge">
+                <Clock size={16} />
+                <span>Expires in {countdown}s</span>
               </div>
             </div>
 
-            <div className="offer-metrics">
-              <span style={{ fontSize: '0.85rem', color: 'rgba(255,255,255,0.85)' }}>
-                Proximity: <b>{activeOffer.distance_km} km away</b>
-              </span>
-              <div className="offer-fare">₹{activeOffer.fare_amount}</div>
+            <div className="offer-progress-track">
+              <div
+                className="offer-progress-fill"
+                style={{ width: `${Math.max(0, (countdown / 30) * 100)}%` }}
+              ></div>
             </div>
-          </div>
 
-          <div className="offer-actions">
-            <button 
-              onClick={() => handleAcceptRide(activeOffer.ride_id)} 
-              className="btn-accept-offer"
-              disabled={actionLoading}
-            >
-              <CheckCircle2 size={18} />
-              <span>Accept Offer ({countdown}s)</span>
-            </button>
-            <button 
-              onClick={() => handleRejectRide(activeOffer.ride_id)} 
-              className="btn-reject-offer"
-              disabled={actionLoading}
-            >
-              <XCircle size={18} />
-              <span>Decline Offer</span>
-            </button>
-          </div>
-        </div>
-      )}
-
-      {/* Top Grid: Profile & Availability Toggle */}
-      <div className="grid grid-cols-3 driver-top-grid">
-        {/* Driver Profile Card */}
-        <div className="card driver-profile-card">
-          <div className="driver-card-head">
-            <div className="driver-avatar-circle">
-              <Navigation size={24} />
-            </div>
-            <div>
-              <h3 className="driver-name">{driver?.name || 'Rajesh Kumar'}</h3>
-              <span className="driver-vehicle">{driver?.vehicle_model || 'Toyota Prius (White)'}</span>
-            </div>
-          </div>
-          <div className="driver-details-list">
-            <div className="detail-row">
-              <span className="detail-label">License Plate:</span>
-              <span className="detail-val"><code>{driver?.license_plate || 'KA-01-AB-1234'}</code></span>
-            </div>
-            <div className="detail-row">
-              <span className="detail-label">Rating:</span>
-              <span className="detail-val rating"><Star size={14} /> {driver?.rating || '4.85'}</span>
-            </div>
-            <div className="detail-row">
-              <span className="detail-label">Current Status:</span>
-              <span className={`badge ${driver?.status === 'AVAILABLE' ? 'badge-success' : 'badge-neutral'}`}>
-                {driver?.status || 'AVAILABLE'}
-              </span>
-            </div>
-          </div>
-        </div>
-
-        {/* Online / Offline Availability Switch Card */}
-        <div className="card toggle-card">
-          <div className="toggle-header">
-            <span className="card-label">Dispatch Availability</span>
-            <span className={`status-pill ${driver?.status === 'AVAILABLE' ? 'online' : 'offline'}`}>
-              <span className="dot"></span>
-              {driver?.status === 'AVAILABLE' ? 'ONLINE & RECEIVING' : 'OFFLINE'}
-            </span>
-          </div>
-          <p className="toggle-desc">
-            When Online, the automatic dispatch algorithm ranks your proximity via Haversine distance and routes incoming ride requests.
-          </p>
-          <button 
-            onClick={handleToggleAvailability} 
-            className={`btn toggle-btn ${driver?.status === 'AVAILABLE' ? 'btn-offline' : 'btn-online'}`}
-            disabled={actionLoading}
-          >
-            <Power size={18} />
-            <span>{driver?.status === 'AVAILABLE' ? 'Go Offline' : 'Go Online (Available)'}</span>
-          </button>
-        </div>
-      </div>
-
-      {/* Middle Section: Active Trip Console & Incoming Offers */}
-      <div className="grid grid-cols-2 driver-middle-grid">
-        {/* Active Trip Execution Console */}
-        <div className="card active-trip-card">
-          <div className="card-head-simple">
-            <h3 className="card-title"><Car size={20} className="icon-blue" /> Active Trip Execution</h3>
-            {activeRide && <span className="badge badge-warning">{activeRide.status}</span>}
-          </div>
-
-          {activeRide ? (
-            <div className="active-trip-console">
-              <RideLifecycleTimeline currentStatus={activeRide.status} />
-
-              <div className="trip-passenger-info">
-                <div>Passenger: <b>{activeRide.passenger_name || 'Passenger'}</b></div>
-                <div>Fare: <b className="fare-tag">₹{activeRide.fare_amount}</b></div>
-              </div>
-
-              <div className="trip-locations-box">
+            <div className="offer-content-grid">
+              <div className="offer-locations">
                 <div className="location-row">
                   <span className="dot green"></span>
                   <div>
-                    <span className="loc-label">Pickup:</span>
-                    <p className="loc-addr">{activeRide.pickup_address}</p>
+                    <span className="loc-label" style={{ color: 'rgba(255,255,255,0.8)' }}>Pickup:</span>
+                    <p className="loc-addr" style={{ color: '#FFFFFF', fontWeight: 600 }}>{activeOffer.pickup_address}</p>
                   </div>
                 </div>
                 <div className="location-row">
                   <span className="dot red"></span>
                   <div>
-                    <span className="loc-label">Destination:</span>
-                    <p className="loc-addr">{activeRide.destination_address}</p>
+                    <span className="loc-label" style={{ color: 'rgba(255,255,255,0.8)' }}>Destination:</span>
+                    <p className="loc-addr" style={{ color: '#FFFFFF', fontWeight: 600 }}>{activeOffer.destination_address}</p>
                   </div>
                 </div>
               </div>
 
-              {/* Sequential Action Controls */}
-              <div className="trip-stepper-actions">
-                {['DRIVER_ASSIGNED', 'PENDING'].includes(activeRide.status) && (
-                  <div className="action-step-group">
-                    <button 
-                      onClick={() => handleAcceptRide(activeRide.id)}
-                      className="btn btn-primary"
-                      disabled={actionLoading}
-                    >
-                      <CheckCircle2 size={16} /> Accept Ride Offer
-                    </button>
-                    <button 
-                      onClick={() => handleRejectRide(activeRide.id)}
-                      className="btn btn-outline"
-                      disabled={actionLoading}
-                    >
-                      <XCircle size={16} /> Reject Offer
-                    </button>
-                  </div>
-                )}
-
-                {activeRide.status === 'DRIVER_ACCEPTED' && (
-                  <button 
-                    onClick={() => handleTripAction('arrived', 'Marked arrived at pickup location')}
-                    className="btn btn-primary"
-                    disabled={actionLoading}
-                  >
-                    <MapPin size={16} /> Step 1: Mark Arrived at Pickup
-                  </button>
-                )}
-
-                {activeRide.status === 'DRIVER_ARRIVED' && (
-                  <button 
-                    onClick={() => handleTripAction('start', 'Trip started! Navigating to destination.')}
-                    className="btn btn-primary"
-                    disabled={actionLoading}
-                  >
-                    <Play size={16} /> Step 2: Start Trip (Passenger Onboard)
-                  </button>
-                )}
-
-                {activeRide.status === 'IN_PROGRESS' && (
-                  <button 
-                    onClick={() => handleTripAction('complete', 'Trip completed successfully! Fare recorded.')}
-                    className="btn btn-primary btn-success-action"
-                    disabled={actionLoading}
-                  >
-                    <Flag size={16} /> Step 3: Complete Trip & Collect Fare
-                  </button>
-                )}
+              <div className="offer-metrics">
+                <span style={{ fontSize: '0.85rem', color: 'rgba(255,255,255,0.85)' }}>
+                  Proximity: <b>{activeOffer.distance_km} km away</b>
+                </span>
+                <div className="offer-fare">₹{activeOffer.fare_amount}</div>
               </div>
             </div>
-          ) : (
-            <div className="no-active-trip">
-              <Navigation size={32} className="no-trip-icon" />
-              <p>No active ride in execution.</p>
-              <span className="subtext">Make sure your status is set to ONLINE to receive offers.</span>
+
+            <div className="offer-actions">
+              <button
+                onClick={() => handleAcceptRide(activeOffer.ride_id)}
+                className="btn-accept-offer"
+                disabled={actionLoading}
+              >
+                <CheckCircle2 size={18} />
+                <span>Accept Offer ({countdown}s)</span>
+              </button>
+              <button
+                onClick={() => handleRejectRide(activeOffer.ride_id)}
+                className="btn-reject-offer"
+                disabled={actionLoading}
+              >
+                <XCircle size={18} />
+                <span>Decline Offer</span>
+              </button>
             </div>
-          )}
-        </div>
-
-        {/* Simulated GPS Coordinate Controller */}
-        <div className="card gps-card">
-          <div className="card-head-simple">
-            <h3 className="card-title"><Compass size={20} className="icon-blue" /> Simulated GPS Controller</h3>
-            <span className="badge badge-info">{simHeading}° Heading</span>
           </div>
+        )}
 
-          <p className="gps-desc">
-            Broadcast simulated GPS coordinates to the Driver Service to update proximity calculations in real-time.
-          </p>
+        {/* Main Dashboard 2-Column Layout: Left (Driver Info + Active Trip) & Right (Stretched Interactive Map) */}
+        <div className="driver-dashboard-grid">
+          {/* Left Column: Driver Info + Active Trip Execution */}
+          <div className="driver-left-col">
+            {/* Driver Suspended SOS Lockout Alert Banner */}
+            {driver?.status === 'SUSPENDED_SOS' && (
+              <div className="driver-suspended-banner">
+                <ShieldAlert size={32} className="driver-suspended-icon" />
+                <div>
+                  <b className="driver-suspended-title">⛔ DRIVER ACCOUNT SUSPENDED (EMERGENCY SOS)</b>
+                  <span className="driver-suspended-desc">
+                    Your account has been suspended by System Operations following an In-Ride Passenger Emergency SOS report. All trip dispatch offers, acceptance, and trip completion capabilities have been locked down.
+                  </span>
+                </div>
+              </div>
+            )}
 
-          <div className="waypoint-buttons-group">
-            <span className="quick-label">Teleport to Waypoint:</span>
-            <div className="waypoint-grid">
-              {GPS_WAYPOINTS.map((wp, idx) => (
-                <button 
-                  key={idx} 
-                  type="button" 
-                  className="waypoint-pill"
-                  onClick={() => handleSelectWaypoint(wp)}
-                  disabled={actionLoading}
+            {/* Driver Approval Alert if Pending */}
+            {driver?.approval_status === 'PENDING' && (
+              <div className="portal-alert" style={{ background: '#FFFBEB', border: '1px solid #FCD34D', color: '#92400E', padding: '1rem', borderRadius: '10px', marginBottom: '1.25rem', display: 'flex', alignItems: 'flex-start', gap: '0.75rem' }}>
+                <Clock size={22} style={{ color: '#D97706', flexShrink: 0, marginTop: '2px' }} />
+                <div>
+                  <b style={{ display: 'block', fontSize: '0.95rem', marginBottom: '0.25rem' }}>⏳ Driver Application Pending Administrator Verification</b>
+                  <span style={{ fontSize: '0.85rem', lineHeight: '1.4' }}>
+                    Your registration information has been sent to the Operations Administrator. Once verified and approved, your vehicle will be allocated as a driver and ride requests will become available to you.
+                  </span>
+                </div>
+              </div>
+            )}
+
+            {/* Driver Profile Card with Availability Toggle */}
+            <div className="card driver-profile-card">
+              <div className="driver-card-head">
+                <div className="driver-head-left">
+                  <div className="driver-avatar-circle">
+                    <Navigation size={24} />
+                  </div>
+                  <div>
+                    <h3 className="driver-name">{driver?.name || 'Rajesh Kumar'}</h3>
+                    <span className="driver-vehicle">{driver?.vehicle_model || 'Toyota Prius (White)'}</span>
+                  </div>
+                </div>
+
+                <button
+                  type="button"
+                  onClick={handleToggleAvailability}
+                  className={`driver-circular-power-btn ${driver?.status === 'AVAILABLE' ? 'online' : 'offline'}`}
+                  disabled={actionLoading || driver?.approval_status === 'PENDING'}
+                  title={driver?.approval_status === 'PENDING' ? 'Pending administrator approval' : (driver?.status === 'AVAILABLE' ? 'Online (Click to Go Offline)' : 'Offline (Click to Go Online)')}
+                  aria-label={driver?.status === 'AVAILABLE' ? 'Online (Click to Go Offline)' : 'Offline (Click to Go Online)'}
                 >
-                  <MapPin size={12} /> {wp.name}
+                  <Power size={22} />
                 </button>
-              ))}
+              </div>
+              <div className="driver-details-list">
+                <div className="detail-row">
+                  <span className="detail-label">Verification:</span>
+                  <span className={`badge ${driver?.approval_status === 'APPROVED' ? 'badge-success' : 'badge-warning'}`}>
+                    {driver?.approval_status === 'APPROVED' ? '✓ VERIFIED PARTNER' : '⏳ PENDING REVIEW'}
+                  </span>
+                </div>
+                <div className="detail-row">
+                  <span className="detail-label">License Plate:</span>
+                  <span className="detail-val"><code>{driver?.license_plate || 'KA-01-AB-1234'}</code></span>
+                </div>
+                <div className="detail-row">
+                  <span className="detail-label">Rating:</span>
+                  <span className="detail-val rating"><Star size={14} /> {driver?.rating || '4.85'}</span>
+                </div>
+                <div className="detail-row">
+                  <span className="detail-label">Current Status:</span>
+                  <span className={`badge ${driver?.status === 'AVAILABLE' ? 'badge-success' : 'badge-neutral'}`}>
+                    {driver?.status || 'AVAILABLE'}
+                  </span>
+                </div>
+              </div>
             </div>
-          </div>
 
-          <div className="coords-inputs-grid">
-            <div className="form-group">
-              <label className="input-label">Latitude</label>
-              <input 
-                type="number" 
-                step="0.0001" 
-                className="form-input" 
-                value={simLat} 
-                onChange={(e) => setSimLat(e.target.value)} 
-              />
-            </div>
-            <div className="form-group">
-              <label className="input-label">Longitude</label>
-              <input 
-                type="number" 
-                step="0.0001" 
-                className="form-input" 
-                value={simLng} 
-                onChange={(e) => setSimLng(e.target.value)} 
-              />
-            </div>
-            <div className="form-group">
-              <label className="input-label">Heading (°)</label>
-              <input 
-                type="number" 
-                min="0" 
-                max="360" 
-                className="form-input" 
-                value={simHeading} 
-                onChange={(e) => setSimHeading(e.target.value)} 
-              />
-            </div>
-          </div>
+            {/* Active Trip Execution Console */}
+            <div className="card active-trip-card">
+              <div className="card-head-simple">
+                <h3 className="card-title"><Car size={20} className="icon-blue" /> Active Trip Execution</h3>
+                {activeRide && <span className="badge badge-warning">{activeRide.status}</span>}
+              </div>
 
-          <button 
-            type="button" 
-            onClick={() => handleUpdateLocation()} 
-            className="btn btn-outline btn-broadcast"
-            disabled={actionLoading}
-          >
-            <Compass size={16} /> Broadcast GPS Telemetry Ping
-          </button>
-        </div>
-      </div>
+              {activeRide ? (
+                <div className="active-trip-console">
+                  <RideLifecycleTimeline currentStatus={activeRide.status} />
 
-      {/* Completed Rides Table */}
-      <div className="card history-card">
-        <div className="history-head">
-          <h3 className="history-title">Trips & Execution Records</h3>
-          <span className="badge badge-neutral">{rides.length} Total Registered Rides</span>
-        </div>
+                  <div className="trip-passenger-info">
+                    <div>Passenger: <b>{activeRide.passenger_name || 'Passenger'}</b></div>
+                    <div>Fare: <b className="fare-tag">₹{activeRide.fare_amount}</b></div>
+                  </div>
 
-        <div className="table-container">
-          <table className="data-table">
-            <thead>
-              <tr>
-                <th>Ride ID</th>
-                <th>Passenger</th>
-                <th>Pickup Address</th>
-                <th>Destination</th>
-                <th>Fare Amount</th>
-                <th>Status</th>
-              </tr>
-            </thead>
-            <tbody>
-              {rides.length > 0 ? (
-                rides.map((r) => (
-                  <tr key={r.id}>
-                    <td><code>{r.id.substring(0, 12)}...</code></td>
-                    <td>{r.passenger_name || 'Passenger'}</td>
-                    <td>{r.pickup_address}</td>
-                    <td>{r.destination_address}</td>
-                    <td><b>₹{r.fare_amount}</b></td>
-                    <td>
-                      <span className={`badge ${r.status === 'COMPLETED' ? 'badge-success' : r.status === 'CANCELLED' ? 'badge-neutral' : 'badge-warning'}`}>
-                        {r.status}
-                      </span>
-                    </td>
-                  </tr>
-                ))
+                  <div className="trip-locations-box">
+                    <div className="location-row">
+                      <span className="dot green"></span>
+                      <div>
+                        <span className="loc-label">Pickup:</span>
+                        <p className="loc-addr">{activeRide.pickup_address}</p>
+                      </div>
+                    </div>
+                    <div className="location-row">
+                      <span className="dot red"></span>
+                      <div>
+                        <span className="loc-label">Destination:</span>
+                        <p className="loc-addr">{activeRide.destination_address}</p>
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* Sequential Action Controls */}
+                  <div className="trip-stepper-actions">
+                    {['DRIVER_ASSIGNED', 'PENDING'].includes(activeRide.status) && (
+                      <div className="action-step-group">
+                        <button
+                          onClick={() => handleAcceptRide(activeRide.id)}
+                          className="btn btn-primary"
+                          disabled={actionLoading}
+                        >
+                          <CheckCircle2 size={16} /> Accept Ride Offer
+                        </button>
+                        <button
+                          onClick={() => handleRejectRide(activeRide.id)}
+                          className="btn btn-outline"
+                          disabled={actionLoading}
+                        >
+                          <XCircle size={16} /> Reject Offer
+                        </button>
+                      </div>
+                    )}
+
+                    {activeRide.status === 'DRIVER_ACCEPTED' && (
+                      <button
+                        onClick={() => handleTripAction('arrived', 'Marked arrived at pickup location')}
+                        className="btn btn-primary"
+                        disabled={actionLoading}
+                      >
+                        <MapPin size={16} /> Step 1: Mark Arrived at Pickup
+                      </button>
+                    )}
+
+                    {activeRide.status === 'DRIVER_ARRIVED' && (
+                      <button
+                        onClick={() => handleTripAction('start', 'Trip started! Navigating to destination.')}
+                        className="btn btn-primary"
+                        disabled={actionLoading}
+                      >
+                        <Play size={16} /> Step 2: Start Trip (Passenger Onboard)
+                      </button>
+                    )}
+
+                    {activeRide.status === 'IN_PROGRESS' && (
+                      <button
+                        onClick={() => handleTripAction('complete', 'Trip completed successfully! Fare recorded.')}
+                        className="btn btn-primary btn-success-action"
+                        disabled={actionLoading}
+                      >
+                        <Flag size={16} /> Step 3: Complete Trip & Collect Fare
+                      </button>
+                    )}
+                  </div>
+                </div>
               ) : (
-                <tr>
-                  <td colSpan="6" style={{ textAlign: 'center', padding: '2rem' }}>
-                    No trip execution records.
-                  </td>
-                </tr>
+                <div className="no-active-trip">
+                  <Navigation size={32} className="no-trip-icon" />
+                  <p>No active ride in execution.</p>
+                  <span className="subtext">Make sure your status is set to ONLINE to receive offers.</span>
+                </div>
               )}
-            </tbody>
-          </table>
+            </div>
+          </div>
+
+          {/* Right Column: Full-Height Stretched Interactive GPS Map Card */}
+          <div className="card gps-card driver-map-stretched-card">
+            {/* Interactive Telemetry Map */}
+            <RideMap
+              driverLocation={{
+                lat: simLat,
+                lng: simLng,
+                heading: simHeading,
+                name: driver?.name || 'Driver',
+              }}
+              pickupLocation={activeRide ? {
+                lat: activeRide.pickup_latitude,
+                lng: activeRide.pickup_longitude,
+                address: activeRide.pickup_address,
+              } : null}
+              destLocation={activeRide ? {
+                lat: activeRide.destination_latitude,
+                lng: activeRide.destination_longitude,
+                address: activeRide.destination_address,
+              } : null}
+              onMapClick={(lat, lng) => {
+                setSimLat(lat);
+                setSimLng(lng);
+                handleUpdateLocation(lat, lng, simHeading);
+              }}
+              clickHint="Click map to teleport GPS location"
+              statusText={activeRide ? `Active Navigation • ${activeRide.status}` : null}
+              height="450px"
+              showRoute={!!activeRide}
+            />
+
+            <div className="coords-inputs-grid">
+              <div className="form-group">
+                <label className="input-label">Latitude</label>
+                <input
+                  type="number"
+                  step="0.0001"
+                  className="form-input"
+                  value={simLat}
+                  onChange={(e) => setSimLat(e.target.value)}
+                  onBlur={() => handleUpdateLocation()}
+                  onKeyDown={(e) => e.key === 'Enter' && handleUpdateLocation()}
+                />
+              </div>
+              <div className="form-group">
+                <label className="input-label">Longitude</label>
+                <input
+                  type="number"
+                  step="0.0001"
+                  className="form-input"
+                  value={simLng}
+                  onChange={(e) => setSimLng(e.target.value)}
+                  onBlur={() => handleUpdateLocation()}
+                  onKeyDown={(e) => e.key === 'Enter' && handleUpdateLocation()}
+                />
+              </div>
+              <div className="form-group">
+                <label className="input-label">Heading (°)</label>
+                <input
+                  type="number"
+                  min="0"
+                  max="360"
+                  className="form-input"
+                  value={simHeading}
+                  onChange={(e) => setSimHeading(e.target.value)}
+                  onBlur={() => handleUpdateLocation()}
+                  onKeyDown={(e) => e.key === 'Enter' && handleUpdateLocation()}
+                />
+              </div>
+            </div>
+          </div>
+        </div>
+
+        {/* Completed Rides Table */}
+        <div className="card history-card">
+          <div className="history-head" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '0.75rem' }}>
+            <div>
+              <h3 className="history-title">Trips & Execution Records</h3>
+              <span style={{ fontSize: '0.8rem', color: '#64748B', display: 'block', marginTop: '0.2rem' }}>
+                Showing {driver?.name ? `${driver.name}'s` : 'driver'} completed and cancelled rides
+              </span>
+            </div>
+
+            <div style={{ display: 'flex', alignItems: 'center', gap: '0.65rem' }}>
+              {/* Filter Toggle Buttons: All / Completed / Cancelled */}
+              <div className="trip-filter-tabs" style={{ display: 'inline-flex', background: '#F1F5F9', padding: '3px', borderRadius: '8px' }}>
+                <button
+                  type="button"
+                  onClick={() => setTripFilter('ALL')}
+                  style={{
+                    border: 'none',
+                    background: tripFilter === 'ALL' ? '#FFFFFF' : 'transparent',
+                    color: tripFilter === 'ALL' ? '#1E293B' : '#64748B',
+                    fontWeight: tripFilter === 'ALL' ? 700 : 500,
+                    fontSize: '0.78rem',
+                    padding: '0.35rem 0.75rem',
+                    borderRadius: '6px',
+                    cursor: 'pointer',
+                    boxShadow: tripFilter === 'ALL' ? '0 1px 3px rgba(0,0,0,0.1)' : 'none',
+                    transition: 'all 0.15s'
+                  }}
+                >
+                  All ({rides.length})
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setTripFilter('COMPLETED')}
+                  style={{
+                    border: 'none',
+                    background: tripFilter === 'COMPLETED' ? '#10B981' : 'transparent',
+                    color: tripFilter === 'COMPLETED' ? '#FFFFFF' : '#64748B',
+                    fontWeight: tripFilter === 'COMPLETED' ? 700 : 500,
+                    fontSize: '0.78rem',
+                    padding: '0.35rem 0.75rem',
+                    borderRadius: '6px',
+                    cursor: 'pointer',
+                    boxShadow: tripFilter === 'COMPLETED' ? '0 1px 3px rgba(16,185,129,0.3)' : 'none',
+                    transition: 'all 0.15s'
+                  }}
+                >
+                  Completed ({rides.filter(r => (r.driver_display_status || r.status) === 'COMPLETED').length})
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setTripFilter('CANCELLED')}
+                  style={{
+                    border: 'none',
+                    background: tripFilter === 'CANCELLED' ? '#EF4444' : 'transparent',
+                    color: tripFilter === 'CANCELLED' ? '#FFFFFF' : '#64748B',
+                    fontWeight: tripFilter === 'CANCELLED' ? 700 : 500,
+                    fontSize: '0.78rem',
+                    padding: '0.35rem 0.75rem',
+                    borderRadius: '6px',
+                    cursor: 'pointer',
+                    boxShadow: tripFilter === 'CANCELLED' ? '0 1px 3px rgba(239,68,68,0.3)' : 'none',
+                    transition: 'all 0.15s'
+                  }}
+                >
+                  Cancelled ({rides.filter(r => (r.driver_display_status || r.status) === 'CANCELLED').length})
+                </button>
+              </div>
+            </div>
+          </div>
+
+          <div className="table-container">
+            <table className="data-table">
+              <thead>
+                <tr>
+                  <th>Ride ID</th>
+                  <th>Passenger</th>
+                  <th>Pickup Address</th>
+                  <th>Destination</th>
+                  <th>Fare Amount</th>
+                  <th>Status</th>
+                </tr>
+              </thead>
+              <tbody>
+                {(() => {
+                  const displayedRides = rides.filter(r => {
+                    const s = r.driver_display_status || r.status;
+                    if (tripFilter === 'COMPLETED') return s === 'COMPLETED';
+                    if (tripFilter === 'CANCELLED') return s === 'CANCELLED';
+                    return true;
+                  });
+                  return displayedRides.length > 0 ? (
+                    (showAllTrips ? displayedRides : displayedRides.slice(0, 5)).map((r) => (
+                      <tr key={r.id}>
+                        <td><code>{r.id.substring(0, 12)}...</code></td>
+                        <td><b>{r.passenger_name || 'Passenger'}</b></td>
+                        <td>{r.pickup_address}</td>
+                        <td>{r.destination_address}</td>
+                        <td><b>₹{r.fare_amount}</b></td>
+                        <td>
+                          <span className={`badge ${(r.driver_display_status || r.status) === 'COMPLETED' ? 'badge-success' : 'badge-neutral'}`}>
+                            {r.driver_display_status || r.status}
+                          </span>
+                          {r.driver_note && (
+                            <span style={{ fontSize: '0.72rem', color: '#64748B', display: 'block', marginTop: '2px', fontWeight: 500 }}>
+                              {r.driver_note}
+                            </span>
+                          )}
+                        </td>
+                      </tr>
+                    ))
+                  ) : (
+                    <tr>
+                      <td colSpan="6" style={{ textAlign: 'center', padding: '2.5rem', color: '#64748B' }}>
+                        {tripFilter === 'COMPLETED'
+                          ? 'No completed rides recorded for this driver yet.'
+                          : tripFilter === 'CANCELLED'
+                            ? 'No cancelled rides recorded for this driver.'
+                            : 'No completed or cancelled rides for this driver yet.'}
+                      </td>
+                    </tr>
+                  );
+                })()}
+              </tbody>
+            </table>
+          </div>
+
+          {(() => {
+            const displayedRides = rides.filter(r => {
+              const s = r.driver_display_status || r.status;
+              if (tripFilter === 'COMPLETED') return s === 'COMPLETED';
+              if (tripFilter === 'CANCELLED') return s === 'CANCELLED';
+              return true;
+            });
+            return displayedRides.length > 5 ? (
+              <div style={{ padding: '0.85rem', textAlign: 'center', borderTop: '1px solid #f1f5f9' }}>
+                <button
+                  type="button"
+                  onClick={() => setShowAllTrips(prev => !prev)}
+                  className="btn btn-outline btn-sm"
+                  style={{
+                    fontSize: '0.82rem',
+                    fontWeight: 600,
+                    color: '#2563EB',
+                    borderColor: '#BFDBFE',
+                    background: '#EFF6FF',
+                    padding: '0.45rem 1.25rem',
+                    borderRadius: '8px',
+                    display: 'inline-flex',
+                    alignItems: 'center',
+                    gap: '0.4rem',
+                    cursor: 'pointer'
+                  }}
+                >
+                  {showAllTrips ? (
+                    <>Show Less <ChevronUp size={15} /></>
+                  ) : (
+                    <>Show More ({displayedRides.length - 5} older trips) <ChevronDown size={15} /></>
+                  )}
+                </button>
+              </div>
+            ) : null;
+          })()}
         </div>
       </div>
+
+      {/* Pop Message Modal: Trip Completed & Fare Recorded */}
+      {completedTripModal && (
+        <div 
+          className="completed-modal-backdrop" 
+          onClick={(e) => { if (e.target === e.currentTarget) setCompletedTripModal(null); }}
+        >
+          <div className="completed-modal-dialog">
+            {/* Close 'X' Button */}
+            <button 
+              onClick={() => setCompletedTripModal(null)}
+              className="completed-modal-close-btn"
+              aria-label="Close"
+            >
+              <X size={20} />
+            </button>
+
+            {/* Celebration Icon Badge */}
+            <div className="celebrate-icon-ring">
+              <CheckCircle2 size={38} color="#10B981" />
+            </div>
+
+            <h2 className="completed-title">Trip Completed Successfully! 🎉</h2>
+
+            {/* Trip Route & Fare Preview */}
+            <div className="completed-trip-card">
+              <div className="completed-route-col">
+                <div className="route-stop">
+                  <span className="route-stop-dot green"></span>
+                  <span className="route-stop-text">{completedTripModal.pickup_address}</span>
+                </div>
+                <div className="route-stop-divider"></div>
+                <div className="route-stop">
+                  <span className="route-stop-dot red"></span>
+                  <span className="route-stop-text">{completedTripModal.destination_address}</span>
+                </div>
+              </div>
+              <div className="completed-fare-tag">
+                <span className="fare-tag-label">Fare Collected</span>
+                <span className="fare-tag-val">₹{completedTripModal.fare_amount}</span>
+              </div>
+            </div>
+
+            {/* Passenger & Trip Details Pill/Grid */}
+            <div className="driver-modal-stats-card">
+              <div className="driver-modal-stat-row">
+                <span className="driver-stat-title">Passenger:</span>
+                <span className="driver-stat-val"><b>{completedTripModal.passenger_name || 'Passenger'}</b></span>
+              </div>
+              {completedTripModal.distance_km && (
+                <div className="driver-modal-stat-row">
+                  <span className="driver-stat-title">Distance:</span>
+                  <span className="driver-stat-val"><b>{completedTripModal.distance_km} km</b></span>
+                </div>
+              )}
+              {completedTripModal.id && (
+                <div className="driver-modal-stat-row">
+                  <span className="driver-stat-title">Ride ID:</span>
+                  <span className="driver-stat-val font-mono" style={{ fontSize: '0.8rem', color: '#64748B' }}>
+                    {completedTripModal.id.slice(0, 18)}...
+                  </span>
+                </div>
+              )}
+            </div>
+
+            {/* Ready for Next Ride Action Button */}
+            <button 
+              type="button" 
+              onClick={() => setCompletedTripModal(null)}
+              className="driver-modal-dismiss-btn"
+            >
+              <Car size={18} /> Ready for Next Ride
+            </button>
+          </div>
+        </div>
+      )}
     </div>
   );
 };

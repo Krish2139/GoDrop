@@ -4,7 +4,7 @@ import bcrypt from 'bcryptjs';
 import { z } from 'zod';
 import { logger } from '../logger.js';
 import { authenticateJwt } from '../middleware/auth.js';
-import { query, isDbConnected } from '../db.js';
+import { query, isDbConnected, pool } from '../db.js';
 
 const router = express.Router();
 const JWT_SECRET = process.env.JWT_SECRET || 'super_secret_jwt_key_rideflow_academic_system_design_2026';
@@ -31,7 +31,7 @@ export const usersStore = [
   {
     id: 'user-pass-1',
     email: 'passenger@rideflow.io',
-    name: 'Aarav Sharma',
+    name: 'Aarav Patel',
     role: 'PASSENGER',
     password_hash: PASS_HASH,
     created_at: new Date().toISOString(),
@@ -110,32 +110,65 @@ router.post('/register', async (req, res) => {
     };
 
     if (isDbConnected()) {
+      let client;
       try {
-        await query(
+        client = await pool.connect();
+        await client.query('BEGIN');
+
+        await client.query(
           `INSERT INTO users (id, email, password_hash, role, name, phone)
            VALUES ($1, $2, $3, $4, $5, $6)`,
           [newUser.id, newUser.email, newUser.password_hash, newUser.role, newUser.name, newUser.phone]
         );
 
         if (newUser.role === 'PASSENGER') {
-          await query(
+          await client.query(
             `INSERT INTO passengers (id, user_id, rating, total_rides)
              VALUES ($1, $2, 5.00, 0)`,
-            [`pass-${Date.now()}`, newUser.id]
+            [`pass-${Date.now()}-${Math.random().toString(36).substring(2, 5)}`, newUser.id]
           );
         } else if (newUser.role === 'DRIVER') {
           const vehicleModel = validated.vehicle_model || 'Hyundai Grand i10 (White)';
-          const licensePlate = validated.license_plate || `GJ-01-XX-${Math.floor(1000 + Math.random() * 9000)}`;
+          let licensePlate = (validated.license_plate || '').trim() || `GJ-01-${String.fromCharCode(65 + Math.floor(Math.random() * 26))}${String.fromCharCode(65 + Math.floor(Math.random() * 26))}-${Math.floor(1000 + Math.random() * 9000)}`;
           const lat = validated.latitude || 23.0275;
           const lng = validated.longitude || 72.5076;
-          await query(
-            `INSERT INTO drivers (id, user_id, vehicle_model, license_plate, rating, status, current_latitude, current_longitude)
-             VALUES ($1, $2, $3, $4, 5.00, 'AVAILABLE', $5, $6)`,
-            [`driver-${Date.now()}`, newUser.id, vehicleModel, licensePlate, lat, lng]
+
+          // Ensure license plate uniqueness cleanly before insert
+          const plateCheck = await client.query('SELECT id FROM drivers WHERE license_plate = $1', [licensePlate]);
+          if (plateCheck.rows.length > 0) {
+            await client.query('ROLLBACK');
+            return res.status(409).json({
+              success: false,
+              error: 'ConflictError',
+              message: `Vehicle license plate '${licensePlate}' is already registered. Please enter a unique license plate.`,
+            });
+          }
+
+          await client.query(
+            `INSERT INTO drivers (id, user_id, vehicle_model, license_plate, rating, status, current_latitude, current_longitude, approval_status)
+             VALUES ($1, $2, $3, $4, 5.00, 'OFFLINE', $5, $6, 'PENDING')`,
+            [`driver-${Date.now()}-${Math.random().toString(36).substring(2, 5)}`, newUser.id, vehicleModel, licensePlate, lat, lng]
           );
         }
+
+        await client.query('COMMIT');
       } catch (err) {
+        if (client) await client.query('ROLLBACK').catch(() => {});
         logger.error(err, 'PostgreSQL insert user error');
+        if (err.code === '23505') {
+          return res.status(409).json({
+            success: false,
+            error: 'ConflictError',
+            message: 'Account email or license plate already exists.',
+          });
+        }
+        return res.status(500).json({
+          success: false,
+          error: 'DatabaseError',
+          message: 'Failed to create account in database. Please try again.',
+        });
+      } finally {
+        if (client) client.release();
       }
     }
 
@@ -151,13 +184,16 @@ router.post('/register', async (req, res) => {
 
     res.status(201).json({
       success: true,
-      message: 'Account registered successfully.',
+      message: newUser.role === 'DRIVER'
+        ? 'Driver application submitted! Your profile is pending administrator verification.'
+        : 'Account registered successfully.',
       token,
       user: {
         id: newUser.id,
         email: newUser.email,
         name: newUser.name,
         role: newUser.role,
+        approval_status: newUser.role === 'DRIVER' ? 'PENDING' : 'APPROVED',
       },
     });
   } catch (err) {
@@ -209,6 +245,20 @@ router.post('/login', async (req, res) => {
         error: 'Unauthorized',
         message: 'Invalid email or password credentials.',
       });
+    }
+
+    // For DRIVER logins, ensure active driver profile exists and is not suspended
+    if (user.role === 'DRIVER' && isDbConnected()) {
+      const drvRes = await query('SELECT id, status FROM drivers WHERE user_id = $1 LIMIT 1', [user.id]);
+      if (drvRes.rows.length === 0 || drvRes.rows[0].status === 'SUSPENDED_SOS') {
+        logger.warn({ userId: user.id, email: normalizedEmail }, 'Driver login rejected: missing or suspended driver profile');
+        return res.status(401).json({
+          success: false,
+          error: 'AccountRemoved',
+          accountSuspended: true,
+          message: 'Your driver account has been suspended or is not active.',
+        });
+      }
     }
 
     // Issue signed JWT token

@@ -22,7 +22,7 @@ const NotFound = () => {
         404 - Page Not Found
       </h1>
       <p style={{ color: 'var(--slate-500)', maxWidth: '460px', margin: '0 auto 2rem auto' }}>
-        The requested URL does not match any route in the RideFlow distributed system portal.
+        The requested URL does not match any route in the GoDrop distributed system portal.
       </p>
       <Link to="/" className="btn btn-primary">
         <ArrowLeft size={16} /> Return to System Overview

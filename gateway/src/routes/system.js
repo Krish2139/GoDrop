@@ -25,7 +25,7 @@ export const gatewayMetrics = {
 };
 
 // GET /health - Gateway basic health
-router.get('/health', (req, res) => {
+router.get(['/health', '/api/v1/health'], (req, res) => {
   res.json({
     status: 'UP',
     service: 'api-gateway',
@@ -40,7 +40,7 @@ router.get('/health', (req, res) => {
 });
 
 // GET /health/services - Aggregated downstream health
-router.get('/health/services', async (req, res) => {
+router.get(['/health/services', '/api/v1/health/services'], async (req, res) => {
   const checkService = async (name, url) => {
     try {
       const response = await axios.get(`${url}/health`, { timeout: 2000 });
@@ -82,7 +82,7 @@ router.get('/health/services', async (req, res) => {
 });
 
 // GET /api/v1/metrics - System & Telemetry metrics
-router.get('/api/v1/metrics', async (req, res) => {
+router.get(['/metrics', '/api/v1/metrics'], async (req, res) => {
   let redisMemoryInfo = null;
   if (isRedisConnected()) {
     try {
@@ -162,7 +162,7 @@ router.get('/api/v1/metrics', async (req, res) => {
 // -------------------------------------------------------------
 
 // POST /api/v1/chaos/inject - Inject simulated fault into downstream microservice
-router.post('/api/v1/chaos/inject', (req, res) => {
+router.post(['/chaos/inject', '/api/v1/chaos/inject'], (req, res) => {
   const { target = 'driverService', mode = 'error', delayMs = 3500 } = req.body || {};
   const state = injectChaos({ target, mode, delayMs });
   res.json({
@@ -173,7 +173,7 @@ router.post('/api/v1/chaos/inject', (req, res) => {
 });
 
 // POST /api/v1/chaos/reset - Heal all faults and force circuit breakers closed
-router.post('/api/v1/chaos/reset', (req, res) => {
+router.post(['/chaos/reset', '/api/v1/chaos/reset'], (req, res) => {
   const state = resetChaos();
   res.json({
     success: true,
@@ -183,7 +183,7 @@ router.post('/api/v1/chaos/reset', (req, res) => {
 });
 
 // GET /api/v1/chaos/status - Query active chaos mode and circuit breaker states
-router.get('/api/v1/chaos/status', (req, res) => {
+router.get(['/chaos/status', '/api/v1/chaos/status'], (req, res) => {
   res.json({
     success: true,
     chaosState,

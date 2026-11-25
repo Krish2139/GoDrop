@@ -1,3 +1,14 @@
+.portal-page-wrapper {
+  min-height: calc(100vh - 70px);
+  width: 100%;
+  background-color: #EBF3FE;
+  background-image: url('/portal-bg.svg');
+  background-repeat: no-repeat;
+  background-size: cover;
+  background-position: center top;
+  background-attachment: fixed;
+}
+
 .admin-portal-page {
   padding: 2.5rem 1.5rem;
   display: flex;
@@ -88,3 +99,723 @@
   margin: 0.25rem 0;
 }
 
+
+
+/* ====================================================================
+ * Driver Verification & Onboarding Queue
+ * ==================================================================== */
+.driver-verification-queue-card {
+  border-left: 4px solid #F59E0B;
+  background: #ffffff;
+}
+
+.verification-alert-banner {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  background: #FFFBEB;
+  border: 1px solid #FDE68A;
+  padding: 0.85rem 1.25rem;
+  border-radius: var(--radius-md);
+  margin-bottom: 1.25rem;
+  color: #92400E;
+  font-size: 0.9rem;
+}
+
+.verification-empty-banner {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  background: #F0FDF4;
+  border: 1px solid #BBF7D0;
+  padding: 1rem 1.25rem;
+  border-radius: var(--radius-md);
+  color: #166534;
+  font-size: 0.9rem;
+}
+
+.verification-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(320px, 1fr));
+  gap: 1.25rem;
+}
+
+.driver-applicant-card {
+  background: #F8FAFC;
+  border: 1px solid var(--slate-200);
+  border-radius: var(--radius-md);
+  padding: 1.25rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.85rem;
+  transition: transform 0.2s ease, box-shadow 0.2s ease;
+}
+
+.driver-applicant-card:hover {
+  transform: translateY(-2px);
+  box-shadow: 0 4px 12px rgba(15, 23, 42, 0.08);
+}
+
+.applicant-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+}
+
+.applicant-name {
+  font-size: 1.05rem;
+  font-weight: 700;
+  color: var(--slate-900);
+  margin: 0;
+}
+
+.applicant-contact {
+  font-size: 0.8rem;
+  color: var(--slate-500);
+  margin-top: 0.15rem;
+}
+
+.applicant-details {
+  display: flex;
+  flex-direction: column;
+  gap: 0.35rem;
+  font-size: 0.85rem;
+  color: var(--slate-700);
+  background: #ffffff;
+  padding: 0.75rem;
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--slate-200);
+}
+
+.applicant-row {
+  display: flex;
+  justify-content: space-between;
+}
+
+.applicant-actions {
+  display: flex;
+  gap: 0.5rem;
+  margin-top: auto;
+}
+
+.btn-approve {
+  flex: 1;
+  background: #10B981;
+  color: #ffffff;
+  border: none;
+  font-size: 0.8rem;
+  font-weight: 600;
+  padding: 0.45rem 0.75rem;
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.35rem;
+  transition: background 0.15s ease;
+}
+
+.btn-approve:hover {
+  background: #059669;
+}
+
+.btn-reject {
+  background: #ffffff;
+  color: #DC2626;
+  border: 1px solid #FCA5A5;
+  font-size: 0.8rem;
+  font-weight: 600;
+  padding: 0.45rem 0.75rem;
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.35rem;
+  transition: all 0.15s ease;
+}
+
+.btn-reject:hover {
+  background: #FEF2F2;
+  border-color: #EF4444;
+}
+
+/* ====================================================================
+ * Financial & Revenue Analytics Dashboard (Feature 4)
+ * ==================================================================== */
+.revenue-dashboard-grid {
+  display: grid;
+  grid-template-columns: 2fr 1fr;
+  gap: 1.5rem;
+}
+
+@media (max-width: 1024px) {
+  .revenue-dashboard-grid {
+    grid-template-columns: 1fr;
+  }
+}
+
+.revenue-kpi-subgrid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+  gap: 1rem;
+  margin-bottom: 1.25rem;
+}
+
+.revenue-kpi-card {
+  background: #F8FAFC;
+  border: 1px solid var(--slate-200);
+  border-radius: var(--radius-md);
+  padding: 1rem;
+  display: flex;
+  flex-direction: column;
+}
+
+.revenue-kpi-label {
+  font-size: 0.75rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  color: var(--slate-500);
+  letter-spacing: 0.04em;
+}
+
+.revenue-kpi-val {
+  font-size: 1.5rem;
+  font-weight: 800;
+  color: var(--slate-900);
+  margin-top: 0.25rem;
+}
+
+.revenue-kpi-sub {
+  font-size: 0.75rem;
+  color: var(--slate-500);
+  margin-top: 0.2rem;
+}
+
+.surge-pricing-card {
+  background: #ffffff;
+  border: 1px solid var(--slate-200);
+  border-radius: var(--radius-lg);
+  padding: 1.5rem;
+  display: flex;
+  flex-direction: column;
+  gap: 1rem;
+}
+
+.surge-slider-box {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+}
+
+.surge-slider-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}
+
+.surge-slider-val {
+  font-size: 1.35rem;
+  font-weight: 800;
+  color: #D97706;
+}
+
+.surge-range-input {
+  width: 100%;
+  accent-color: #D97706;
+  cursor: pointer;
+}
+
+.surge-presets-list {
+  display: flex;
+  gap: 0.4rem;
+  flex-wrap: wrap;
+}
+
+.surge-preset-btn {
+  font-size: 0.75rem;
+  font-weight: 600;
+  padding: 0.25rem 0.6rem;
+  border-radius: 6px;
+  border: 1px solid var(--slate-300);
+  background: #ffffff;
+  color: var(--slate-700);
+  cursor: pointer;
+  transition: all 0.15s ease;
+}
+
+.surge-preset-btn:hover {
+  background: var(--slate-100);
+}
+
+.surge-preset-btn.active {
+  background: #D97706;
+  color: #ffffff;
+  border-color: #D97706;
+}
+
+.surge-formula-preview {
+  background: #FFFBEB;
+  border: 1px solid #FDE68A;
+  border-radius: var(--radius-sm);
+  padding: 0.75rem;
+  font-size: 0.8rem;
+  color: #92400E;
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+}
+
+/* ====================================================================
+ * Real-Time Live Activity Event Ticker (Feature 5)
+ * ==================================================================== */
+.live-activity-ticker-card {
+  background: #0F172A;
+  color: #F8FAFC;
+  border-radius: var(--radius-lg);
+  padding: 1.25rem;
+  box-shadow: 0 8px 24px rgba(15, 23, 42, 0.2);
+}
+
+.ticker-header-bar {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 1rem;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.1);
+  padding-bottom: 0.75rem;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+}
+
+.ticker-title-group {
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+  font-weight: 700;
+  font-size: 1rem;
+  color: #ffffff;
+}
+
+.ticker-controls-group {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+}
+
+.ticker-category-btn {
+  font-size: 0.7rem;
+  font-weight: 600;
+  padding: 0.2rem 0.55rem;
+  border-radius: 4px;
+  background: rgba(255, 255, 255, 0.08);
+  border: 1px solid rgba(255, 255, 255, 0.15);
+  color: #94A3B8;
+  cursor: pointer;
+  transition: all 0.15s ease;
+}
+
+.ticker-category-btn:hover {
+  background: rgba(255, 255, 255, 0.15);
+  color: #ffffff;
+}
+
+.ticker-category-btn.active {
+  background: #3B82F6;
+  border-color: #3B82F6;
+  color: #ffffff;
+}
+
+.ticker-feed-list {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+  max-height: 260px;
+  overflow-y: auto;
+  font-family: var(--font-mono, monospace);
+  font-size: 0.8rem;
+  padding-right: 0.35rem;
+}
+
+.ticker-feed-item {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  padding: 0.4rem 0.6rem;
+  background: rgba(255, 255, 255, 0.03);
+  border-radius: 4px;
+  border-left: 3px solid #3B82F6;
+  transition: background 0.15s ease;
+}
+
+.ticker-feed-item:hover {
+  background: rgba(255, 255, 255, 0.07);
+}
+
+.ticker-feed-item.trip {
+  border-left-color: #F59E0B;
+}
+
+.ticker-feed-item.driver {
+  border-left-color: #10B981;
+}
+
+.ticker-feed-item.security {
+  border-left-color: #EC4899;
+}
+
+.ticker-time {
+  color: #64748B;
+  font-size: 0.72rem;
+  white-space: nowrap;
+}
+
+.ticker-badge {
+  font-size: 0.65rem;
+  font-weight: 700;
+  padding: 0.1rem 0.35rem;
+  border-radius: 3px;
+  text-transform: uppercase;
+}
+
+.ticker-badge.trip {
+  background: rgba(245, 158, 11, 0.2);
+  color: #FBBF24;
+}
+
+.ticker-badge.driver {
+  background: rgba(16, 185, 129, 0.2);
+  color: #34D399;
+}
+
+.ticker-badge.system {
+  background: rgba(59, 130, 246, 0.2);
+  color: #60A5FA;
+}
+
+.ticker-badge.security {
+  background: rgba(236, 72, 153, 0.2);
+  color: #F472B6;
+}
+
+.ticker-text {
+  color: #E2E8F0;
+  flex: 1;
+}
+
+/* ==========================================================================
+   Admin In-Ride SOS & Automated Rescue Command Sentinel Styles
+   ========================================================================== */
+.sos-emergency-strobe-banner {
+  background: linear-gradient(135deg, #7F1D1D 0%, #DC2626 100%);
+  border: 2px solid #EF4444;
+  border-radius: 12px;
+  padding: 1.25rem 1.5rem;
+  margin-bottom: 1.5rem;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 1rem;
+  box-shadow: 0 6px 20px rgba(220, 38, 38, 0.45);
+  animation: admin-strobe 1.5s infinite alternate ease-in-out;
+}
+
+@keyframes admin-strobe {
+  0% {
+    box-shadow: 0 0 0 0 rgba(239, 68, 68, 0.6), 0 6px 20px rgba(220, 38, 38, 0.45);
+    border-color: #EF4444;
+  }
+  100% {
+    box-shadow: 0 0 0 10px rgba(239, 68, 68, 0), 0 8px 25px rgba(220, 38, 38, 0.7);
+    border-color: #F87171;
+  }
+}
+
+.sos-strobe-left {
+  display: flex;
+  align-items: center;
+  gap: 1rem;
+}
+
+.sos-strobe-badge {
+  width: 52px;
+  height: 52px;
+  border-radius: 12px;
+  background: rgba(255, 255, 255, 0.15);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: #FFFFFF;
+  flex-shrink: 0;
+}
+
+.sos-icon-pulse {
+  animation: beacon-wiggle 1s infinite ease-in-out;
+}
+
+.sos-badge-critical {
+  background: #EF4444;
+  color: #FFFFFF;
+  font-size: 0.72rem;
+  font-weight: 800;
+  padding: 0.15rem 0.5rem;
+  border-radius: 4px;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+}
+
+.sos-strobe-actions {
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+}
+
+.btn-sos-sound-toggle {
+  background: rgba(255, 255, 255, 0.15);
+  color: #FFFFFF;
+  border: 1px solid rgba(255, 255, 255, 0.3);
+  border-radius: 8px;
+  padding: 0.55rem 0.95rem;
+  font-size: 0.85rem;
+  font-weight: 600;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+  transition: all 0.2s ease;
+}
+
+.btn-sos-sound-toggle:hover {
+  background: rgba(255, 255, 255, 0.25);
+}
+
+.btn-sos-dismiss-banner {
+  background: #FFFFFF;
+  color: #991B1B;
+  border: none;
+  border-radius: 8px;
+  padding: 0.55rem 1rem;
+  font-size: 0.85rem;
+  font-weight: 700;
+  cursor: pointer;
+  transition: all 0.2s ease;
+}
+
+.btn-sos-dismiss-banner:hover {
+  background: #FEE2E2;
+}
+
+.sos-sentinel-card {
+  margin-bottom: 2rem;
+  border: 1.5px solid #FCA5A5;
+}
+
+.badge-critical-pulse {
+  background: #DC2626;
+  color: #FFFFFF;
+  font-size: 0.75rem;
+  font-weight: 800;
+  padding: 0.25rem 0.65rem;
+  border-radius: 9999px;
+  letter-spacing: 0.04em;
+  animation: beacon-wiggle 1.2s infinite ease-in-out;
+}
+
+.sos-clear-state {
+  background: #F0FDF4;
+  border: 1px dashed #6EE7B7;
+  border-radius: 12px;
+  padding: 1.75rem 1rem;
+  text-align: center;
+}
+
+.sos-incident-card {
+  border-radius: 12px;
+  padding: 1.25rem;
+  transition: all 0.2s ease;
+}
+
+.sos-incident-active {
+  background: #FFF5F5;
+  border: 1.5px solid #F87171;
+  box-shadow: 0 4px 12px rgba(239, 68, 68, 0.1);
+}
+
+.sos-incident-resolved {
+  background: #F8FAFC;
+  border: 1px solid #E2E8F0;
+  opacity: 0.85;
+}
+
+.sos-card-top-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 0.85rem;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+}
+
+.sos-status-pill {
+  font-size: 0.72rem;
+  font-weight: 800;
+  padding: 0.2rem 0.55rem;
+  border-radius: 9999px;
+  text-transform: uppercase;
+}
+
+.pill-active {
+  background: #FEE2E2;
+  color: #DC2626;
+  border: 1px solid #FCA5A5;
+}
+
+.pill-resolved {
+  background: #ECFDF5;
+  color: #059669;
+  border: 1px solid #A7F3D0;
+}
+
+.sos-context-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+  gap: 0.85rem;
+  background: #FFFFFF;
+  border: 1px solid #E2E8F0;
+  border-radius: 10px;
+  padding: 0.85rem 1rem;
+  margin-bottom: 0.85rem;
+}
+
+.sos-context-col {
+  display: flex;
+  flex-direction: column;
+  gap: 0.2rem;
+}
+
+.sos-col-label {
+  font-size: 0.72rem;
+  font-weight: 700;
+  color: #64748B;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.sos-col-name {
+  font-size: 0.92rem;
+  color: #0F172A;
+}
+
+.sos-col-sub {
+  font-size: 0.78rem;
+  color: #475569;
+  display: flex;
+  align-items: center;
+  gap: 0.3rem;
+}
+
+.sos-audit-badge-row {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+  margin-bottom: 0.85rem;
+}
+
+.sos-simulated-authority-badge {
+  font-size: 0.72rem;
+  font-weight: 600;
+  color: #065F46;
+  background: #ECFDF5;
+  border: 1px solid #A7F3D0;
+  border-radius: 6px;
+  padding: 0.25rem 0.55rem;
+}
+
+.sos-action-taken-badge {
+  font-size: 0.72rem;
+  color: #991B1B;
+  background: #FEE2E2;
+  border: 1px solid #FCA5A5;
+  border-radius: 6px;
+  padding: 0.25rem 0.55rem;
+}
+
+.sos-rescue-badge {
+  font-size: 0.72rem;
+  color: #0369A1;
+  background: #E0F2FE;
+  border: 1px solid #BAE6FD;
+  border-radius: 6px;
+  padding: 0.25rem 0.55rem;
+  font-weight: 600;
+}
+
+.sos-action-buttons-row {
+  display: flex;
+  align-items: center;
+  gap: 0.65rem;
+  flex-wrap: wrap;
+}
+
+.btn-sos-suspend {
+  background: #DC2626;
+  color: #FFFFFF;
+  border: none;
+  border-radius: 8px;
+  padding: 0.55rem 0.95rem;
+  font-size: 0.85rem;
+  font-weight: 700;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+  transition: all 0.2s ease;
+  box-shadow: 0 2px 8px rgba(220, 38, 38, 0.25);
+}
+
+.btn-sos-suspend:hover:not(:disabled) {
+  background: #B91C1C;
+  transform: translateY(-1px);
+}
+
+.btn-sos-rescue {
+  background: #059669;
+  color: #FFFFFF;
+  border: none;
+  border-radius: 8px;
+  padding: 0.55rem 0.95rem;
+  font-size: 0.85rem;
+  font-weight: 700;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+  transition: all 0.2s ease;
+  box-shadow: 0 2px 8px rgba(5, 150, 105, 0.25);
+}
+
+.btn-sos-rescue:hover:not(:disabled) {
+  background: #047857;
+  transform: translateY(-1px);
+}
+
+.btn-sos-resolve {
+  background: #475569;
+  color: #FFFFFF;
+  border: none;
+  border-radius: 8px;
+  padding: 0.55rem 0.95rem;
+  font-size: 0.85rem;
+  font-weight: 600;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+  transition: all 0.2s ease;
+}
+
+.btn-sos-resolve:hover:not(:disabled) {
+  background: #334155;
+}
